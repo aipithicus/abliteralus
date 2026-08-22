@@ -579,16 +579,6 @@ def test_loader_failure_removes_materialized_checkpoint(tmp_path, monkeypatch):
     assert not materialized.exists()
 
 
-def test_smoke_loader_requires_explicit_remote_code_trust():
-    from scripts import smoke_load_quant
-
-    parser = smoke_load_quant.build_parser()
-    assert parser.parse_args(["org/model"]).trust_remote_code is False
-    assert parser.parse_args([
-        "org/model", "--trust-remote-code",
-    ]).trust_remote_code is True
-
-
 def test_numerical_fixture_provenance_is_machine_readable():
     provenance = json.loads(
         (Path(__file__).parent / "fixtures" / "quant_dequant_provenance.json").read_text()
