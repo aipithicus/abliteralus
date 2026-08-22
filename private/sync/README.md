@@ -46,11 +46,26 @@ The fork needs an `upstream` remote for `--sync-fork`:
 Lab-only artifacts (checkpoints, adapters, results) carry the codename in metadata keys and are
 not interchangeable with fork-produced ones; cached activations (plain safetensors) are.
 
-## After the first extraction
+## Running the vendored tests
 
 ```
 uv sync --extra dev                 # CUDA torch per pyproject; fresh uv.lock (never the fork's)
-python private/sync/airgap_check.py
+uv run python private/sync/airgap_check.py
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8 \
 uv run pytest -q                    # the vendored core tests are the extraction's acceptance test
-git add private README.md && git commit -m "lab: tooling"
 ```
+
+`PYTORCH_CUDA_ALLOC_CONF` must be pre-set on a Windows CUDA box: upstream `device.py` otherwise
+sets `expandable_segments:True`, torch warns it is unsupported on Windows, and upstream's
+`filterwarnings = ["error"]` turns that into a test failure (upstream bug; their CI has no CUDA).
+
+Baseline on this machine (fork b0da692, transform as of 2026-08-22): **1173 passed, 10 failed,
+1 skipped, 77 % coverage**. The 10 are Windows-only and not extraction artifacts — seven symlink
+tests (`WinError 1314`, needs Developer Mode/admin), two loader-retry tests asserting POSIX path
+separators, one `os.sysconf` call. They pass on Linux.
+
+What the transform prunes from the vendored tests (all reported on every sync): tests that
+reference a non-vendored module, a stubbed network library, an excluded top-level package such
+as `scripts/`, or a module-level helper/fixture that does (one level of indirection); and
+parametrize literals naming exports dropped from `__init__`.
