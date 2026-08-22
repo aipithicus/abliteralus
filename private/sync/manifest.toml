@@ -147,6 +147,8 @@ paths = [
 # same-named sentinels that raise abliteralus._lab_airgap.DisabledError when used. Local-path
 # code paths keep working; hub-ID paths fail loudly.
 network_modules = ["huggingface_hub", "datasets", "requests"]
+# Tests importing these excluded top-level packages of the fork are pruned as well.
+prune_references = ["scripts", "app"]
 # After seams, no import of these may remain anywhere in the package (hard assertion).
 forbidden_after = ["huggingface_hub", "datasets", "requests", "subprocess", "socket", "urllib", "http"]
 

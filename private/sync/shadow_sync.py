@@ -193,13 +193,24 @@ def prune_init_exports(text: str, package: str, selected_modules: set[str]) -> t
     return text, dropped
 
 
+def prune_literal_exports(text: str, dropped_exports: list[str]) -> tuple[str, int]:
+    """Drop ``"name",`` list entries in test parametrizations for exports the lab no longer has."""
+    n = 0
+    for name in dropped_exports:
+        text, k = re.subn(rf'^\s*"{re.escape(name)}",[ \t]*\n', "", text, flags=re.M)
+        n += k
+    return text, n
+
+
 def prune_tests(text: str, package: str, excluded_modules: set[str], network_modules: list[str],
-                path: str) -> tuple[str, list[str]]:
-    """Remove test functions that reference a non-vendored module or a stubbed network library.
+                path: str, extra_refs: list[str] | None = None) -> tuple[str, list[str]]:
+    """Remove test functions that reach a non-vendored module or a stubbed network library.
 
     AST-anchored: a test (module-level ``test_*`` or a method of a top-level class) is removed,
-    decorators included, when its source mentions ``<package>.<excluded module>`` or any network
-    module name as a whole word. A class emptied by pruning gets a ``pass`` body.
+    decorators included, when its source mentions ``<package>.<excluded module>``, any network
+    module name as a whole word, an import of an excluded top-level package (``extra_refs``), or
+    the name of a module-level helper/fixture that itself does any of those (one level of
+    indirection). A class emptied by pruning gets a ``pass`` body.
     """
     import ast
 
@@ -208,16 +219,35 @@ def prune_tests(text: str, package: str, excluded_modules: set[str], network_mod
     except SyntaxError:
         return text, []
     lines = text.split("\n")
-    mod_re = re.compile(rf"\b{re.escape(package)}\.({'|'.join(map(re.escape, sorted(excluded_modules)))})\b") if excluded_modules else None
-    net_re = re.compile(rf"\b({'|'.join(map(re.escape, network_modules))})\b") if network_modules else None
+    pats: list[re.Pattern] = []
+    if excluded_modules:
+        pats.append(re.compile(rf"\b{re.escape(package)}\.({'|'.join(map(re.escape, sorted(excluded_modules)))})\b"))
+    if network_modules:
+        pats.append(re.compile(rf"\b({'|'.join(map(re.escape, network_modules))})\b"))
+    if extra_refs:
+        alt = "|".join(map(re.escape, extra_refs))
+        pats.append(re.compile(rf"(?:^|[^\w.])(?:from|import)\s+({alt})\b|[\"']({alt})[.\"']", re.M))
+
+    def src_of(fn: ast.AST) -> tuple[int, int, str]:
+        start = min([fn.lineno] + [d.lineno for d in fn.decorator_list])  # type: ignore[attr-defined]
+        end = fn.end_lineno  # type: ignore[attr-defined]
+        return start, end, "\n".join(lines[start - 1:end])
+
+    def tainted(src: str) -> bool:
+        return any(p.search(src) for p in pats)
+
+    # One level of indirection: module-level non-test functions (helpers, fixtures) that are tainted.
+    helpers = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("test")]
+    tainted_helpers = {h.name for h in helpers if tainted(src_of(h)[2])}
+    if tainted_helpers:
+        pats.append(re.compile(rf"\b({'|'.join(map(re.escape, sorted(tainted_helpers)))})\b"))
+
     removed: list[str] = []
     spans: list[tuple[int, int]] = []  # 1-based inclusive
 
     def consider(fn: ast.AST, qual: str) -> None:
-        start = min([fn.lineno] + [d.lineno for d in fn.decorator_list])  # type: ignore[attr-defined]
-        end = fn.end_lineno  # type: ignore[attr-defined]
-        src = "\n".join(lines[start - 1:end])
-        if (mod_re and mod_re.search(src)) or (net_re and net_re.search(src)):
+        start, end, src = src_of(fn)
+        if tainted(src):
             spans.append((start, end))
             removed.append(f"{path}::{qual}")
 
@@ -394,7 +424,8 @@ def build_tree(fork: Path, ref: str, manifest: dict, out: Path, *, stage_a_only:
     excluded_modules = {m for m in map(_module_name, excluded) if m} - selected_modules
     injected_modules = {m for m in map(_module_name, inject_files) if m}
     selected_modules |= injected_modules
-    for rel in included:
+    # Package __init__ first: its dropped exports feed the test-literal pruning below.
+    for rel in sorted(included, key=lambda r: (r != f"{pkg_old}/__init__.py", r)):
         raw = git(["show", f"{ref}:{rel}"], fork, binary=True)
         dst_rel = ren.path(rel)
         dst = out / dst_rel
@@ -421,8 +452,12 @@ def build_tree(fork: Path, ref: str, manifest: dict, out: Path, *, stage_a_only:
                 report["dropped_exports"] = dropped
             if rel.startswith("tests/") and rel.endswith(".py"):
                 text, pruned = prune_tests(text, pkg_new, excluded_modules,
-                                           manifest["seams"]["network_modules"], dst_rel)
+                                           manifest["seams"]["network_modules"], dst_rel,
+                                           manifest["seams"].get("prune_references", []))
                 report["pruned_tests"].extend(pruned)
+                text, k = prune_literal_exports(text, report["dropped_exports"])
+                if k:
+                    report["pruned_literals"] = report.get("pruned_literals", 0) + k
             if rel == "pyproject.toml":
                 text = transform_pyproject(text, manifest["pyproject"], manifest["torch"], constraints)
         dst.write_text(text, encoding="utf-8", newline="\n")
@@ -601,6 +636,8 @@ def print_report(rep: dict, ref_sha: str, ref_date: str, commit: str | None, pre
         print(f"pruned tests referencing non-vendored modules or stubbed network libs: {len(rep['pruned_tests'])}")
         for t in rep["pruned_tests"]:
             print(f"    - {t}")
+    if rep.get("pruned_literals"):
+        print(f"pruned parametrize literals naming dropped exports: {rep['pruned_literals']}")
     if rep.get("torch_version"):
         print(f"constraints: {rep['constraints']} pins from fork lock; torch=={rep['torch_version']} via CUDA index")
     if dry:
