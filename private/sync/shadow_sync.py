@@ -168,6 +168,89 @@ def apply_seams(text: str, package: str, from_re: re.Pattern, plain_re: re.Patte
     return "\n".join(lines), count
 
 
+# ───────────────────────────── pruning ─────────────────────────────
+
+_LAZY_BRANCH = re.compile(
+    r"^    if name == \"(?P<name>\w+)\":\n        from (?P<mod>[\w.]+) import \w+\n        return \w+\n",
+    re.M,
+)
+
+
+def prune_init_exports(text: str, package: str, selected_modules: set[str]) -> tuple[str, list[str]]:
+    """Drop lazy exports in the package ``__init__`` whose target module was not vendored."""
+    dropped: list[str] = []
+
+    def _branch(m: re.Match) -> str:
+        mod = m["mod"]
+        if mod.startswith(package + ".") and mod[len(package) + 1:] not in selected_modules:
+            dropped.append(m["name"])
+            return ""
+        return m.group(0)
+
+    text = _LAZY_BRANCH.sub(_branch, text)
+    for name in dropped:
+        text = re.sub(rf'^    "{re.escape(name)}",\n', "", text, flags=re.M)
+    return text, dropped
+
+
+def prune_tests(text: str, package: str, excluded_modules: set[str], network_modules: list[str],
+                path: str) -> tuple[str, list[str]]:
+    """Remove test functions that reference a non-vendored module or a stubbed network library.
+
+    AST-anchored: a test (module-level ``test_*`` or a method of a top-level class) is removed,
+    decorators included, when its source mentions ``<package>.<excluded module>`` or any network
+    module name as a whole word. A class emptied by pruning gets a ``pass`` body.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text, []
+    lines = text.split("\n")
+    mod_re = re.compile(rf"\b{re.escape(package)}\.({'|'.join(map(re.escape, sorted(excluded_modules)))})\b") if excluded_modules else None
+    net_re = re.compile(rf"\b({'|'.join(map(re.escape, network_modules))})\b") if network_modules else None
+    removed: list[str] = []
+    spans: list[tuple[int, int]] = []  # 1-based inclusive
+
+    def consider(fn: ast.AST, qual: str) -> None:
+        start = min([fn.lineno] + [d.lineno for d in fn.decorator_list])  # type: ignore[attr-defined]
+        end = fn.end_lineno  # type: ignore[attr-defined]
+        src = "\n".join(lines[start - 1:end])
+        if (mod_re and mod_re.search(src)) or (net_re and net_re.search(src)):
+            spans.append((start, end))
+            removed.append(f"{path}::{qual}")
+
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            consider(node, node.name)
+        elif isinstance(node, ast.ClassDef):
+            pruned_starts: set[int] = set()
+            for m in node.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test"):
+                    before = len(spans)
+                    consider(m, f"{node.name}::{m.name}")
+                    if len(spans) > before:
+                        pruned_starts.add(spans[-1][0])
+            if not pruned_starts:
+                continue
+            survivors = [
+                n for n in node.body
+                if not (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and min([n.lineno] + [d.lineno for d in n.decorator_list]) in pruned_starts)
+            ]
+            if all(isinstance(n, ast.Expr) for n in survivors):
+                # Only a docstring (or nothing) would remain: give the class a ``pass`` body.
+                indent = " " * node.body[0].col_offset
+                anchor = node.body[0].end_lineno if survivors else node.lineno
+                lines[anchor - 1] = lines[anchor - 1] + "\n" + indent + "pass"
+    for start, end in sorted(spans, reverse=True):
+        del lines[start - 1:end]
+    out = "\n".join(lines)
+    out = re.sub(r"\n{4,}", "\n\n\n", out)
+    return out, removed
+
+
 # ───────────────────────────── pyproject ─────────────────────────────
 
 
@@ -261,6 +344,17 @@ def load_manifest() -> dict:
         return tomllib.load(fh)
 
 
+def transform_version() -> str:
+    """Short hash of everything that defines the transform: script, manifest, stubs."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for p in sorted([HERE / "shadow_sync.py", HERE / "manifest.toml", *sorted((HERE / "stubs").glob("*.py"))]):
+        h.update(p.name.encode())
+        h.update(p.read_bytes())
+    return h.hexdigest()[:12]
+
+
 def select_files(fork: Path, ref: str, manifest: dict) -> tuple[list[str], list[str], list[str]]:
     all_files = git(["ls-tree", "-r", "--name-only", ref], fork).split("\n")
     inc = [glob_to_regex(p) for p in manifest["include"]["paths"]]
@@ -285,9 +379,21 @@ def build_tree(fork: Path, ref: str, manifest: dict, out: Path, *, stage_a_only:
     inject_files = manifest["seams"].get("inject_files", {})
     included, excluded, unmapped = select_files(fork, ref, manifest)
     report = {"included": included, "excluded": excluded, "unmapped": unmapped,
-              "seams": {}, "replaced": [], "injected": [], "binary": []}
+              "seams": {}, "replaced": [], "injected": [], "binary": [],
+              "dropped_exports": [], "pruned_tests": []}
     torch_version: list[str] = []
     constraints = [] if stage_a_only else constraints_from_fork(fork, pkg_old, torch_version)
+
+    def _module_name(rel: str) -> str | None:
+        if not (rel.startswith(pkg_old + "/") and rel.endswith(".py")):
+            return None
+        dotted = rel[len(pkg_old) + 1:-3].replace("/", ".")
+        return dotted[:-len(".__init__")] if dotted.endswith(".__init__") else dotted
+
+    selected_modules = {m for m in map(_module_name, included) if m}
+    excluded_modules = {m for m in map(_module_name, excluded) if m} - selected_modules
+    injected_modules = {m for m in map(_module_name, inject_files) if m}
+    selected_modules |= injected_modules
     for rel in included:
         raw = git(["show", f"{ref}:{rel}"], fork, binary=True)
         dst_rel = ren.path(rel)
@@ -310,6 +416,13 @@ def build_tree(fork: Path, ref: str, manifest: dict, out: Path, *, stage_a_only:
                 text, n = apply_seams(text, pkg_new, from_re, plain_re)
                 if n:
                     report["seams"][dst_rel] = n
+            if rel == f"{pkg_old}/__init__.py":
+                text, dropped = prune_init_exports(text, pkg_new, selected_modules)
+                report["dropped_exports"] = dropped
+            if rel.startswith("tests/") and rel.endswith(".py"):
+                text, pruned = prune_tests(text, pkg_new, excluded_modules,
+                                           manifest["seams"]["network_modules"], dst_rel)
+                report["pruned_tests"].extend(pruned)
             if rel == "pyproject.toml":
                 text = transform_pyproject(text, manifest["pyproject"], manifest["torch"], constraints)
         dst.write_text(text, encoding="utf-8", newline="\n")
@@ -452,6 +565,12 @@ def cmd_self_test(fork: Path, ref: str, manifest: dict) -> int:
                 compile(p.read_text(encoding="utf-8"), str(p), "exec")
             except SyntaxError as exc:
                 bad.append(f"{p.relative_to(out_b).as_posix()}: {exc}")
+        print(f"self-test stage B pruning: dropped exports {rep_b['dropped_exports']}; pruned tests {len(rep_b['pruned_tests'])}")
+        for p in (out_b / "tests").rglob("*.py"):
+            try:
+                compile(p.read_text(encoding="utf-8"), str(p), "exec")
+            except SyntaxError as exc:
+                bad.append(f"{p.relative_to(out_b).as_posix()}: {exc}")
         print(f"self-test stage B compile check: {len(bad)} syntax errors")
         for b in bad:
             print("  ", b)
@@ -476,6 +595,12 @@ def print_report(rep: dict, ref_sha: str, ref_date: str, commit: str | None, pre
           f"replaced {rep['replaced']}; injected {rep['injected']}")
     for f, n in sorted(rep["seams"].items()):
         print(f"    {n:2d}  {f}")
+    if rep.get("dropped_exports"):
+        print(f"dropped lazy exports of non-vendored modules: {rep['dropped_exports']}")
+    if rep.get("pruned_tests"):
+        print(f"pruned tests referencing non-vendored modules or stubbed network libs: {len(rep['pruned_tests'])}")
+        for t in rep["pruned_tests"]:
+            print(f"    - {t}")
     if rep.get("torch_version"):
         print(f"constraints: {rep['constraints']} pins from fork lock; torch=={rep['torch_version']} via CUDA index")
     if dry:
@@ -532,8 +657,10 @@ def main(argv: list[str] | None = None) -> int:
         prev_before = git(["rev-parse", "-q", "--verify", "refs/heads/shadow"], lab, check=False) or None
         main_mod = main_modified_files(lab, prev_before)
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+        tv = transform_version()
         msg = (f"shadow: fork {ref_sha[:12]} ({ref_date[:10]}) — {len(rep['included'])} files, "
-               f"{sum(rep['seams'].values())} seams\n\nFork-Commit: {ref_sha}\nSynced: {stamp}\n")
+               f"{sum(rep['seams'].values())} seams, transform {tv}\n\n"
+               f"Fork-Commit: {ref_sha}\nTransform: {tv}\nSynced: {stamp}\n")
         commit, prev = commit_tree_to_shadow(lab, tree, msg)
         first_run = ensure_main(lab, commit or prev)  # type: ignore[arg-type]
         changed = changed_since(lab, prev, commit) if commit else []
