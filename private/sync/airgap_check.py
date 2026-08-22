@@ -46,9 +46,11 @@ def main() -> int:
         for m in forb_re.finditer(p.read_text(encoding="utf-8")):
             failures.append(f"forbidden import in {p.relative_to(LAB_ROOT).as_posix()}: {m.group(0).strip()}")
 
-    # 2. dynamic: block sockets, import every module
-    socket.socket = _blocked  # type: ignore[assignment]
+    # 2. dynamic: block connections (not the socket class — ssl subclasses it), import every module
+    socket.socket.connect = _blocked  # type: ignore[method-assign]
+    socket.socket.connect_ex = _blocked  # type: ignore[method-assign]
     socket.create_connection = _blocked  # type: ignore[assignment]
+    socket.getaddrinfo = _blocked  # type: ignore[assignment]
     pkg = importlib.import_module(PKG)
     imported = 0
     for info in pkgutil.walk_packages(pkg.__path__, prefix=PKG + "."):
