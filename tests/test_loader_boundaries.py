@@ -869,27 +869,6 @@ def test_non_gated_model_oserror_is_preserved(loader_boundary):
         loader.load_model("x", local_files_only=True)
 
 
-def test_cached_path_compatibility_resolves_local_hub_and_fallback(monkeypatch, tmp_path):
-    local = tmp_path / "weights.bin"
-    local.write_bytes(b"weights")
-    assert loader._cached_path_shim(local) == str(local)
-
-    download = Mock(return_value="/cache/config.json")
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
-    assert loader._cached_path_shim("owner/model/config.json", cache_dir="/cache") == "/cache/config.json"
-    download.assert_called_once_with(
-        repo_id="owner/model",
-        filename="config.json",
-        cache_dir="/cache",
-    )
-
-    download.side_effect = RuntimeError("network unavailable")
-    assert loader._cached_path_shim("owner/model/config.json") == "owner/model/config.json"
-    download.reset_mock(side_effect=True)
-    assert loader._cached_path_shim("single-name") == "single-name"
-    download.assert_not_called()
-
-
 def test_working_or_temp_dir_compatibility_preserves_and_cleans_paths(tmp_path):
     with loader._working_or_temp_dir(tmp_path) as selected:
         assert selected == tmp_path

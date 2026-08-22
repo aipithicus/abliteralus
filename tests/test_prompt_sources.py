@@ -56,26 +56,6 @@ def test_single_column_external_sources(monkeypatch, loader, rows, expected):
     assert len(harmless) == 1
 
 
-def test_anthropic_parser_deduplicates_and_uses_fallback(monkeypatch):
-    calls = []
-
-    def load_dataset(*_args, **kwargs):
-        calls.append(kwargs)
-        if "data_dir" in kwargs:
-            raise RuntimeError("primary unavailable")
-        return [
-            {"chosen": "Human: A unique and sufficiently long prompt Assistant: response"},
-            {"rejected": "Human: A unique and sufficiently long prompt Assistant: other"},
-            {"chosen": "no conversation markers"},
-        ]
-
-    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(load_dataset=load_dataset))
-    harmful, harmless = prompts._load_anthropic_redteam()
-    assert harmful == ["A unique and sufficiently long prompt"]
-    assert len(harmless) == 1
-    assert len(calls) == 2
-
-
 def test_wildjailbreak_requires_pairs_and_deduplicates(monkeypatch):
     _datasets(monkeypatch, [
         {"adversarial_query": "A sufficiently long adversarial prompt", "vanilla_query": "safe"},

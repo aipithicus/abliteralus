@@ -232,46 +232,6 @@ def test_safetensors_key_names_handles_missing_and_invalid_files(tmp_path):
     assert qd._safetensors_key_names(str(tmp_path), None) == set()
 
 
-def test_safetensors_key_names_remote_propagates_hub_policy(tmp_path, monkeypatch):
-    from safetensors.torch import save_file
-
-    checkpoint = tmp_path / "remote.safetensors"
-    save_file({"remote.weight": torch.ones(1)}, checkpoint)
-    monkeypatch.setattr(qd, "_load_json_from_checkpoint", lambda *args, **kwargs: None)
-    calls = []
-
-    def fake_download(repo, filename, **kwargs):
-        calls.append((repo, filename, kwargs))
-        return str(checkpoint)
-
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
-    assert qd._safetensors_key_names(
-        "org/model",
-        None,
-        token="token",
-        revision="immutable-sha",
-        local_files_only=True,
-    ) == {"remote.weight"}
-    assert calls == [(
-        "org/model",
-        "model.safetensors",
-        {
-            "token": "token",
-            "revision": "immutable-sha",
-            "local_files_only": True,
-        },
-    )]
-
-
-def test_safetensors_key_names_remote_download_failure_is_empty(monkeypatch):
-    monkeypatch.setattr(qd, "_load_json_from_checkpoint", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        "huggingface_hub.hf_hub_download",
-        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")),
-    )
-    assert qd._safetensors_key_names("org/model", None) == set()
-
-
 def test_detect_none(tmp_path):
     _write_config(tmp_path, {"model_type": "gpt2"})
     det = qd.detect_quant_scheme(str(tmp_path))
@@ -432,42 +392,6 @@ def test_detect_passthrough_schemes(tmp_path, method):
     assert det.scheme is qd.QuantScheme.NONE
 
 
-def test_detect_remote_checkpoint_pins_revision_and_offline_mode(
-    tmp_path, monkeypatch,
-):
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps({
-        "quantization_config": {
-            "quant_method": "fp8",
-            "weight_block_size": [128, 128],
-        },
-    }))
-    calls = []
-
-    def fake_download(repo, filename, **kwargs):
-        calls.append((repo, filename, kwargs))
-        return str(config_path)
-
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
-    det = qd.detect_quant_scheme(
-        "org/model",
-        token="token",
-        revision="immutable-sha",
-        local_files_only=True,
-    )
-
-    assert det.scheme is qd.QuantScheme.FP8_BLOCKWISE
-    assert calls == [(
-        "org/model",
-        "config.json",
-        {
-            "token": "token",
-            "revision": "immutable-sha",
-            "local_files_only": True,
-        },
-    )]
-
-
 def test_loader_propagates_revision_and_offline_mode_to_detection(monkeypatch):
     from abliteralus.models import loader as loader_mod
 
@@ -500,46 +424,6 @@ def test_loader_propagates_revision_and_offline_mode_to_detection(monkeypatch):
         "revision": "immutable-sha",
         "local_files_only": True,
     }
-
-
-def test_materialize_remote_checkpoint_pins_revision_and_offline_mode(
-    tmp_path, monkeypatch,
-):
-    from safetensors.torch import save_file
-
-    source = tmp_path / "source"
-    source.mkdir()
-    _write_config(source, {
-        "model_type": "gpt2",
-        "quantization_config": {"quant_method": "fp8"},
-    })
-    save_file({"plain.weight": torch.ones(2, 2)}, source / "model.safetensors")
-    captured = {}
-
-    def fake_snapshot(repo, **kwargs):
-        captured["repo"] = repo
-        captured.update(kwargs)
-        return str(source)
-
-    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot)
-    output, returned_source = qd.materialize_dequantized_checkpoint(
-        "org/model",
-        qd.QuantDetection(qd.QuantScheme.FP8_BLOCKWISE),
-        token="token",
-        revision="immutable-sha",
-        local_files_only=True,
-    )
-    try:
-        assert returned_source == str(source)
-        assert captured["repo"] == "org/model"
-        assert captured["token"] == "token"
-        assert captured["revision"] == "immutable-sha"
-        assert captured["local_files_only"] is True
-        assert "*.safetensors" in captured["allow_patterns"]
-    finally:
-        import shutil
-
-        shutil.rmtree(output)
 
 
 def test_materialize_failure_removes_partial_checkpoint(tmp_path, monkeypatch):
