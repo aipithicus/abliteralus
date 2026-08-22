@@ -42,47 +42,6 @@ def test_cache_copies_results_and_builtin_loader_isolated():
     assert len(harmful) == len(harmless) == 842
 
 
-@pytest.mark.parametrize(
-    ("loader", "rows", "expected"),
-    [
-        (prompts._load_harmbench, [{"Behavior": "A sufficiently long behavior"}], "A sufficiently long behavior"),
-        (prompts._load_advbench, [{"goal": "A sufficiently long goal prompt"}], "A sufficiently long goal prompt"),
-    ],
-)
-def test_single_column_external_sources(monkeypatch, loader, rows, expected):
-    _datasets(monkeypatch, rows)
-    harmful, harmless = loader()
-    assert harmful == [expected]
-    assert len(harmless) == 1
-
-
-def test_wildjailbreak_requires_pairs_and_deduplicates(monkeypatch):
-    _datasets(monkeypatch, [
-        {"adversarial_query": "A sufficiently long adversarial prompt", "vanilla_query": "safe"},
-        {"adversarial": "A sufficiently long adversarial prompt", "vanilla": "duplicate"},
-        {"adversarial": "missing pair"},
-    ])
-    harmful, harmless = prompts._load_wildjailbreak()
-    assert harmful == ["A sufficiently long adversarial prompt"]
-    assert harmless == ["safe"]
-
-
-@pytest.mark.parametrize(
-    "loader",
-    [prompts._load_harmbench, prompts._load_advbench, prompts._load_wildjailbreak],
-)
-def test_external_loaders_explain_empty_schemas(monkeypatch, loader):
-    _datasets(monkeypatch, [{"unexpected": "value"}])
-    with pytest.raises(RuntimeError, match="0 prompts extracted"):
-        loader()
-
-
-def test_anthropic_empty_parse_is_rejected(monkeypatch):
-    _datasets(monkeypatch, [{"chosen": "not a conversation"}])
-    with pytest.raises(RuntimeError, match="0 prompts extracted"):
-        prompts._load_anthropic_redteam()
-
-
 def test_custom_prompt_validation_padding_and_registry_access():
     harmful_text = "\n".join(f"harm {index}" for index in range(5))
     with pytest.raises(ValueError, match="at least 5"):

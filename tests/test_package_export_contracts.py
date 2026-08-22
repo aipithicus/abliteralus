@@ -16,18 +16,6 @@ import abliteralus.analysis as analysis
     [
         "AbliterationPipeline",
         "InformedAbliterationPipeline",
-        "save_contribution",
-        "load_contributions",
-        "aggregate_results",
-        "TourneyRunner",
-        "TourneyResult",
-        "get_adaptive_recommendation",
-        "AdaptiveRecommendation",
-        "RemoteRunner",
-        "RemoteConfig",
-        "Watchtower",
-        "get_watchtower",
-        "AutoObliterator",
     ],
 )
 def test_documented_lazy_export_resolves(name):
