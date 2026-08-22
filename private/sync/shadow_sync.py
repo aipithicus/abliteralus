@@ -613,7 +613,10 @@ def print_report(rep: dict, ref_sha: str, ref_date: str, commit: str | None, pre
     if first_run:
         print("main: created from shadow and checked out — commit private/ and README on main when ready")
     if changed:
-        print(f"changed upstream since last shadow ({len(changed)}):")
+        prev_fork = rep.get("prev_fork_commit")
+        cause = ("changed by the transform (fork unchanged)" if prev_fork == ref_sha
+                 else "changed upstream since last shadow")
+        print(f"{cause} ({len(changed)}):")
         for line in changed:
             status, _, path = line.partition("\t")
             flag = "  <-- also modified on main" if path in main_mod else ""
@@ -662,6 +665,10 @@ def main(argv: list[str] | None = None) -> int:
                f"{sum(rep['seams'].values())} seams, transform {tv}\n\n"
                f"Fork-Commit: {ref_sha}\nTransform: {tv}\nSynced: {stamp}\n")
         commit, prev = commit_tree_to_shadow(lab, tree, msg)
+        if prev:
+            body = git(["log", "-1", "--format=%B", prev], lab)
+            m = re.search(r"^Fork-Commit: ([0-9a-f]+)", body, re.M)
+            rep["prev_fork_commit"] = m.group(1) if m else None
         first_run = ensure_main(lab, commit or prev)  # type: ignore[arg-type]
         changed = changed_since(lab, prev, commit) if commit else []
         print_report(rep, ref_sha, ref_date, commit, prev, changed, main_mod, first_run, False)
