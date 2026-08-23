@@ -1,6 +1,6 @@
 # fix(whitened_svd): take principal angles on orthonormalized bases
 
-<!-- branch fix/whitened-svd-principal-angles, head 653802a. Paste into the upstream PR template; fill TBD cells from the
+<!-- branch fix/whitened-svd-principal-angles, head 00f7592. Paste into the upstream PR template; fill TBD cells from the
 writeback verification output and the fork's own checks. Scrub before posting. -->
 
 ## Summary
@@ -49,6 +49,17 @@ Files:
 - `obliteratus/analysis/whitened_svd.py`
 - `tests/test_analysis.py`
 
+### Follow-up commit — fix(whitened_svd): compute every comparison cosine on CPU copies
+
+Review follow-up: the direction-level cosines still assumed both inputs share
+a device; a CPU standard direction against accelerator-resident whitened
+directions failed. All cosines now come from detached CPU float64 copies;
+inputs are never moved. Test covers every available device placement.
+
+Files:
+- `obliteratus/analysis/whitened_svd.py`
+- `tests/test_analysis.py`
+
 ### Files
 
 - `obliteratus/analysis/whitened_svd.py`
@@ -63,7 +74,7 @@ Files:
 
 ## Test evidence
 
-Exact head SHA: `653802a`
+Exact head SHA: `00f7592`
 
 | Check | Result | Evidence or notes |
 |---|---|---|

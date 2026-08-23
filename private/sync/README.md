@@ -25,7 +25,9 @@ A local fix is never blocked on upstream: it rides on `fixes` across every sync;
 fixes the same lines differently, that hunk conflicts once (take upstream's), and `rerere` replays
 the resolution afterwards.
 
-Adding a fix (never commit fixes on `main`):
+Adding a fix (never commit fixes on `main`). A persistent worktree for `fixes` lives at
+`../abliteralus-fixes-wt` with its own `.venv` (synced from this repo's `uv.lock`, copied in), so
+tests there exercise the worktree's code and `main`'s working tree is never disturbed:
 
 ```
 git worktree add ../fixes-wt fixes        # or: git switch fixes, if main is clean
