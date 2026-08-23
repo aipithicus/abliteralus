@@ -802,7 +802,7 @@ def test_model_permission_error_retries_and_explicit_device_moves(loader_boundar
     loader_boundary.model_class.from_pretrained.side_effect = [PermissionError("cache"), loader_boundary.model]
     loader.load_model("x", device="cpu", skip_snapshot=True)
     assert loader_boundary.model_class.from_pretrained.call_count == 2
-    assert loader_boundary.model_class.from_pretrained.call_args.kwargs["cache_dir"].endswith("hf_home/hub")
+    assert Path(loader_boundary.model_class.from_pretrained.call_args.kwargs["cache_dir"]) == tmp_path / "hf_home" / "hub"
     loader_boundary.model.to.assert_called_once_with("cpu")
 
 
@@ -825,7 +825,7 @@ def test_tokenizer_permission_retry_and_forced_snapshot(loader_boundary, monkeyp
     loader.AutoTokenizer.from_pretrained.side_effect = [PermissionError("cache"), loader_boundary.tokenizer]
     handle = loader.load_model("x", skip_snapshot=False)
     assert loader.AutoTokenizer.from_pretrained.call_count == 2
-    assert loader.AutoTokenizer.from_pretrained.call_args.kwargs["cache_dir"].endswith("hf_home/hub")
+    assert Path(loader.AutoTokenizer.from_pretrained.call_args.kwargs["cache_dir"]) == tmp_path / "hf_home" / "hub"
     assert handle._original_state is not None
 
 

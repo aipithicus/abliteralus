@@ -15,6 +15,25 @@ import torch
 import abliteralus.persistence_contracts as persistence
 
 
+def _can_symlink() -> bool:
+    """Symbolic links need a privilege on Windows (Developer Mode or admin)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as scratch:
+        target = Path(scratch) / "target"
+        target.mkdir()
+        try:
+            (Path(scratch) / "link").symlink_to(target, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+requires_symlink = pytest.mark.skipif(
+    not _can_symlink(), reason="symbolic links are not permitted for this user on this platform"
+)
+
+
 pytestmark = pytest.mark.cpu
 
 
@@ -166,7 +185,7 @@ def test_validate_local_checkpoint_accepts_pytorch_sharded_weights(tmp_path):
     persistence.validate_local_checkpoint(tmp_path, '{"schema": 1}')
 
 
-@pytest.mark.parametrize("kind", ["file", "symlink"])
+@pytest.mark.parametrize("kind", ["file", pytest.param("symlink", marks=requires_symlink)])
 def test_validate_local_checkpoint_rejects_non_directory_staging(tmp_path, kind):
     staging = tmp_path / "staging"
     if kind == "file":
@@ -310,6 +329,7 @@ def test_validate_local_checkpoint_rejects_checkpoint_without_weights(tmp_path):
         persistence.validate_local_checkpoint(tmp_path, '{"schema": 1}')
 
 
+@requires_symlink
 def test_validate_local_checkpoint_rejects_link_backed_weights(tmp_path):
     _write_valid_local_checkpoint(tmp_path)
     (tmp_path / "model.safetensors").unlink()
@@ -321,6 +341,7 @@ def test_validate_local_checkpoint_rejects_link_backed_weights(tmp_path):
         persistence.validate_local_checkpoint(tmp_path, '{"schema": 1}')
 
 
+@requires_symlink
 def test_validate_local_checkpoint_rejects_link_backed_json(tmp_path):
     _write_valid_local_checkpoint(tmp_path)
     (tmp_path / "config.json").unlink()
@@ -332,6 +353,7 @@ def test_validate_local_checkpoint_rejects_link_backed_json(tmp_path):
         persistence.validate_local_checkpoint(tmp_path, '{"schema": 1}')
 
 
+@requires_symlink
 def test_remove_checkpoint_path_handles_file_directory_symlink_and_missing(tmp_path):
     file_path = tmp_path / "file"
     file_path.write_text("data", encoding="utf-8")
@@ -421,6 +443,7 @@ def test_atomic_checkpoint_cleans_staging_when_new_destination_promotion_fails(
     assert list(tmp_path.glob(".checkpoint.staging-*")) == []
 
 
+@requires_symlink
 def test_atomic_checkpoint_replaces_symlink_without_touching_target(tmp_path):
     target = tmp_path / "target"
     target.mkdir()
@@ -610,6 +633,7 @@ def test_sync_checkpoint_tree_requests_bottom_up_nonfollowing_walk(
     assert observed == {"topdown": False, "followlinks": False}
 
 
+@requires_symlink
 @pytest.mark.parametrize("link_kind", ["file", "directory"])
 def test_atomic_checkpoint_rejects_symlinks_inside_staging(tmp_path, link_kind):
     destination = tmp_path / "checkpoint"
