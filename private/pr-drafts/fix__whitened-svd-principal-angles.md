@@ -1,6 +1,6 @@
 # fix(whitened_svd): take principal angles on orthonormalized bases
 
-<!-- branch fix/whitened-svd-principal-angles, head 7d7db93. Paste into the upstream PR template; fill TBD cells from the
+<!-- branch fix/whitened-svd-principal-angles, head b57e8c5. Paste into the upstream PR template; fill TBD cells from the
 writeback verification output and the fork's own checks. Scrub before posting. -->
 
 ## Summary
@@ -22,6 +22,22 @@ meaning (cosine of the smallest angle, now correct); the new
 subspace_principal_cosines lists the whole spectrum in descending order.
 Oracle tests cover coincident, orthogonal, and partially shared planes.
 
+### Second commit — review findings on the first cut
+
+- With one row on either side the first cut fell back to the cosine against the
+  first standard vector; `span(e1)` vs `span(e0, e1)` returned 0.0 instead of 1.0.
+  Principal angles are now computed for any pair of ranks (the number of cosines
+  is `min(rank, rank)`), and the direction-level `primary_direction_cosine` keeps
+  its own meaning.
+- `orthogonalize_subspace_rows` is plain Householder QR and pads dependent rows
+  with an arbitrary orthonormal direction; duplicate `e0` vs `span(e1, e2)`
+  returned 1.0 instead of 0.0. The comparison now uses a local SVD-based
+  rank-revealing basis (singular values above 1e-6 of the largest). The shared
+  helper is left unchanged here because it also serves the surgery path; that
+  is raised separately.
+- Regression tests for both, including near-duplicate rows and a single
+  standard direction against a whitened plane.
+
 ### Files
 
 - `obliteratus/analysis/whitened_svd.py`
@@ -36,7 +52,7 @@ Oracle tests cover coincident, orthogonal, and partially shared planes.
 
 ## Test evidence
 
-Exact head SHA: `7d7db93`
+Exact head SHA: `b57e8c5`
 
 | Check | Result | Evidence or notes |
 |---|---|---|

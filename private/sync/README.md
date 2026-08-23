@@ -47,8 +47,10 @@ the fork's locked CPU environment. Upstream commits are **subject-only** (conven
 subject, no body, no trailers), so the fork commit keeps just the subject; the lab commit's body
 seeds a PR-description draft in `private/pr-drafts/<branch>.md` laid out on the upstream PR
 template. `--list` shows which entries are already exported (matched by patch-id);
-`--draft-only` regenerates a draft for an exported branch. One ledger entry = one `fixes` commit
-= one fork branch = one upstream PR. Pushing is always a separate, manual step.
+`--draft-only` regenerates a draft for an exported branch; `--onto` appends a follow-up `fixes`
+commit (for example a review fix) to an existing, unpushed fork branch. One ledger entry = one
+fork branch = one upstream PR; a branch may carry more than one commit. Pushing is always a
+separate, manual step.
 
 ## Commands (run from the lab root)
 

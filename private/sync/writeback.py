@@ -237,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-verify", action="store_true", help="skip ruff/pytest in the fork")
     ap.add_argument("--draft-only", action="store_true",
                     help="only (re)write the PR description draft for an already-exported branch")
+    ap.add_argument("--onto", action="store_true",
+                    help="append to an existing (unpushed) fork branch instead of creating one")
     args = ap.parse_args(argv)
 
     manifest = load_manifest()
@@ -263,19 +265,27 @@ def main(argv: list[str] | None = None) -> int:
         die(f"{commit[:12]} was already exported: {prior}")
     if git(["status", "--porcelain", "--untracked-files=no"], fork).strip():
         die("fork has uncommitted tracked changes; commit or stash first")
-    if git(["rev-parse", "-q", "--verify", f"refs/heads/{args.branch}"], fork, check=False).strip():
-        die(f"fork branch {args.branch!r} already exists")
+    branch_exists = bool(git(["rev-parse", "-q", "--verify", f"refs/heads/{args.branch}"], fork, check=False).strip())
+    if branch_exists and not args.onto:
+        die(f"fork branch {args.branch!r} already exists (use --onto to append a follow-up commit)")
+    if args.onto and not branch_exists:
+        die(f"--onto given but fork branch {args.branch!r} does not exist")
+    if args.onto and git(["rev-parse", "-q", "--verify", f"refs/remotes/origin/{args.branch}"], fork, check=False).strip():
+        print(f"writeback: note: origin/{args.branch} exists; appending is fine, never rewrite published history")
     email = git(["config", "user.email"], fork).strip()
     if email != "aipithicus@proton.me":
         die(f"fork identity resolves to {email!r}; refusing")
 
     scrub(patch, manifest["rename"]["to"])
-    print(f"exporting {commit[:12]} — {subject}")
+    print(f"exporting {commit[:12]} — {subject}" + (f" (onto {args.branch})" if args.onto else ""))
     for t in touched:
         print(f"    {t}")
 
     original = git(["rev-parse", "--abbrev-ref", "HEAD"], fork).strip()
-    git(["checkout", "-q", "-b", args.branch, args.base], fork)
+    if args.onto:
+        git(["checkout", "-q", args.branch], fork)
+    else:
+        git(["checkout", "-q", "-b", args.branch, args.base], fork)
     with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False, encoding="utf-8", newline="\n") as fh:
         fh.write(patch)
         patch_path = fh.name
