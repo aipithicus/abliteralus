@@ -1,0 +1,842 @@
+{
+  "schema_version": 2,
+  "owner": "ABLITERALUS maintainers",
+  "source_inventory": {
+    "roots": [
+      "app.py",
+      "abliteralus"
+    ],
+    "coverage_roots": [
+      "abliteralus"
+    ]
+  },
+  "contract_surfaces": [
+    {
+      "id": "package-entrypoints",
+      "owner": "packaging maintainers",
+      "description": "Installed package exports, module entry points, console dispatch, and optional application construction",
+      "contract_types": [
+        "package-entrypoint",
+        "public-interface",
+        "operator-ui"
+      ],
+      "paths": [
+        "app.py",
+        "abliteralus/__init__.py",
+        "abliteralus/__main__.py",
+        "abliteralus/analysis/__init__.py",
+        "abliteralus/evaluation/__init__.py",
+        "abliteralus/models/__init__.py",
+        "abliteralus/reporting/__init__.py",
+        "abliteralus/strategies/__init__.py"
+      ],
+      "required_tests": [
+        "tests/test_cli.py",
+        "tests/test_cli_boundaries.py",
+        "tests/test_module_imports.py",
+        "tests/test_package_export_contracts.py",
+        "tests/conditional/test_operator_ui.py"
+      ]
+    },
+    {
+      "id": "core-pipeline",
+      "owner": "abliteration pipeline maintainers",
+      "description": "Model mutation, orchestration, automated search, study execution, sweeps, and tournament lifecycle",
+      "contract_types": [
+        "model-mutation",
+        "model-runtime",
+        "orchestration",
+        "persistence"
+      ],
+      "paths": [
+        "abliteralus/abliterate.py",
+        "abliteralus/models/offload_surgery.py",
+        "abliteralus/persistence_contracts.py",
+        "abliteralus/auto_obliterate.py",
+        "abliteralus/bayesian_optimizer.py",
+        "abliteralus/informed_pipeline.py",
+        "abliteralus/lora_ablation.py",
+        "abliteralus/runner.py",
+        "abliteralus/sweep.py",
+        "abliteralus/tourney.py",
+        "abliteralus/tourney_contracts.py",
+        "abliteralus/restore_multimodal.py",
+        "abliteralus/capability_check.py"
+      ],
+      "required_tests": [
+        "tests/test_abliterate.py",
+        "tests/test_abliterate_extended.py",
+        "tests/test_auto_obliterate.py",
+        "tests/test_bayesian_optimizer_contracts.py",
+        "tests/test_informed_pipeline.py",
+        "tests/test_informed_pipeline_contracts.py",
+        "tests/test_offline_integration.py",
+        "tests/test_runner_boundaries.py",
+        "tests/test_sweep_contracts.py",
+        "tests/test_tourney_contracts.py",
+        "tests/test_checkpoint_atomicity.py",
+        "tests/test_offload_surgery.py",
+        "tests/test_persistence_contracts.py",
+        "tests/test_persistence_pipeline.py",
+        "tests/conditional/test_cuda_runtime.py",
+        "tests/conditional/test_jetson_runtime.py"
+      ]
+    },
+    {
+      "id": "checkpoint-composition",
+      "owner": "checkpoint composition maintainers",
+      "description": "Architecture-compatible model-weight composition and atomic output promotion",
+      "contract_types": [
+        "model-mutation",
+        "persistence",
+        "public-interface"
+      ],
+      "paths": [
+        "abliteralus/blend.py"
+      ],
+      "required_tests": [
+        "tests/test_blend.py",
+        "tests/test_persistence_contracts.py"
+      ]
+    },
+    {
+      "id": "configuration-and-selection",
+      "owner": "runtime compatibility maintainers",
+      "description": "Configuration, defaults, model profiles, architecture detection, device selection, loading, and preset contracts",
+      "contract_types": [
+        "configuration",
+        "architecture-selection",
+        "device-boundary",
+        "model-runtime"
+      ],
+      "paths": [
+        "abliteralus/adaptive_defaults.py",
+        "abliteralus/architecture_profiles.py",
+        "abliteralus/config.py",
+        "abliteralus/device.py",
+        "abliteralus/mlx_backend.py",
+        "abliteralus/model_profile.py",
+        "abliteralus/models/loader.py",
+        "abliteralus/models/quant_dequant.py",
+        "abliteralus/presets.py",
+        "abliteralus/runtime_contracts.py",
+        "abliteralus/study_presets.py"
+      ],
+      "required_tests": [
+        "tests/test_adaptive_defaults.py",
+        "tests/test_architecture_profiles.py",
+        "tests/test_config.py",
+        "tests/test_config_properties.py",
+        "tests/test_device_boundaries.py",
+        "tests/test_loader_boundaries.py",
+        "tests/test_mistral_architecture_contracts.py",
+        "tests/test_quant_dequant.py",
+        "tests/test_mlx_backend_boundaries.py",
+        "tests/test_model_profile.py",
+        "tests/test_model_profile_contracts.py",
+        "tests/test_runtime_contracts.py",
+        "tests/test_study_presets.py",
+        "tests/conditional/test_jetson_runtime.py"
+      ]
+    },
+    {
+      "id": "credential-resolution",
+      "owner": "runtime security maintainers",
+      "description": "Provider-neutral environment, mounted-file, systemd credential, and executable-broker secret resolution",
+      "contract_types": [
+        "configuration",
+        "external-service",
+        "public-interface"
+      ],
+      "paths": [
+        "abliteralus/credential_sources.py"
+      ],
+      "required_tests": [
+        "tests/test_secrets.py"
+      ]
+    },
+    {
+      "id": "public-interface-and-services",
+      "owner": "operator interface maintainers",
+      "description": "CLI and interactive interfaces, remote execution, service adapters, scheduling, and UI boundaries",
+      "contract_types": [
+        "public-interface",
+        "external-service",
+        "remote-execution",
+        "operator-ui"
+      ],
+      "paths": [
+        "abliteralus/bestiary_sync.py",
+        "abliteralus/cli.py",
+        "abliteralus/interactive.py",
+        "abliteralus/local_ui.py",
+        "abliteralus/models_client.py",
+        "abliteralus/remote.py",
+        "abliteralus/remote_contracts.py",
+        "abliteralus/service_contracts.py",
+        "abliteralus/ui_watchtower.py",
+        "abliteralus/watchtower.py"
+      ],
+      "required_tests": [
+        "tests/test_cli.py",
+        "tests/test_cli_boundaries.py",
+        "tests/test_interactive_contracts.py",
+        "tests/test_local_ui_contracts.py",
+        "tests/test_local_ui_portability.py",
+        "tests/test_bestiary_contracts.py",
+        "tests/test_models_client_contracts.py",
+        "tests/test_remote_boundaries.py",
+        "tests/test_remote_contracts.py",
+        "tests/test_ui_watchtower_contracts.py",
+        "tests/test_watchtower_contracts.py",
+        "tests/conditional/test_network_services.py",
+        "tests/conditional/test_operator_ui.py",
+        "tests/conditional/test_remote_runtime.py"
+      ]
+    },
+    {
+      "id": "research-inputs-and-provenance",
+      "owner": "research integrity maintainers",
+      "description": "Prompt sources, hard negatives, community records, reproducibility controls, and telemetry schemas",
+      "contract_types": [
+        "research-input",
+        "research-output",
+        "reproducibility",
+        "persistence"
+      ],
+      "paths": [
+        "abliteralus/community.py",
+        "abliteralus/hard_negative.py",
+        "abliteralus/prompts.py",
+        "abliteralus/reproducibility.py",
+        "abliteralus/telemetry.py"
+      ],
+      "required_tests": [
+        "tests/test_community.py",
+        "tests/test_hard_negative.py",
+        "tests/test_prompt_sources.py",
+        "tests/test_module_imports.py",
+        "tests/test_telemetry.py",
+        "tests/test_telemetry_failure_contracts.py"
+      ]
+    },
+    {
+      "id": "analysis-methods",
+      "owner": "mechanistic analysis maintainers",
+      "description": "Mechanistic analysis algorithms, numerical invariants, transfer methods, and visualization contracts",
+      "contract_types": [
+        "research-metric",
+        "numerical-invariant",
+        "research-output",
+        "model-runtime"
+      ],
+      "paths": [
+        "abliteralus/analysis/activation_patching.py",
+        "abliteralus/analysis/activation_probing.py",
+        "abliteralus/analysis/alignment_imprint.py",
+        "abliteralus/analysis/anti_ouroboros.py",
+        "abliteralus/analysis/bayesian_kernel_projection.py",
+        "abliteralus/analysis/causal_tracing.py",
+        "abliteralus/analysis/concept_geometry.py",
+        "abliteralus/analysis/conditional_abliteration.py",
+        "abliteralus/analysis/cross_layer.py",
+        "abliteralus/analysis/cross_model_transfer.py",
+        "abliteralus/analysis/defense_robustness.py",
+        "abliteralus/analysis/leace.py",
+        "abliteralus/analysis/logit_lens.py",
+        "abliteralus/analysis/multi_token_position.py",
+        "abliteralus/analysis/numerical_contracts.py",
+        "abliteralus/analysis/probing_classifiers.py",
+        "abliteralus/analysis/residual_stream.py",
+        "abliteralus/analysis/riemannian_manifold.py",
+        "abliteralus/analysis/sae_abliteration.py",
+        "abliteralus/analysis/sparse_surgery.py",
+        "abliteralus/analysis/spectral_certification.py",
+        "abliteralus/analysis/steering_vectors.py",
+        "abliteralus/analysis/tuned_lens.py",
+        "abliteralus/analysis/utils.py",
+        "abliteralus/analysis/visualization.py",
+        "abliteralus/analysis/wasserstein_optimal.py",
+        "abliteralus/analysis/wasserstein_transfer.py",
+        "abliteralus/analysis/whitened_svd.py"
+      ],
+      "required_tests": [
+        "tests/test_analysis.py",
+        "tests/test_analysis_utils.py",
+        "tests/test_breakthrough_modules.py",
+        "tests/test_causal_and_transfer.py",
+        "tests/test_defense_robustness.py",
+        "tests/test_leace.py",
+        "tests/test_logit_lens.py",
+        "tests/test_new_analysis_modules.py",
+        "tests/test_numerical_contracts.py",
+        "tests/test_novel_analysis.py",
+        "tests/test_projection_math_contracts.py",
+        "tests/test_whitened_svd_oracles.py",
+        "tests/test_visualization.py"
+      ]
+    },
+    {
+      "id": "evaluation-and-benchmarks",
+      "owner": "evaluation maintainers",
+      "description": "Evaluation routing, benchmark execution, plots, statistical metrics, and external adapter results",
+      "contract_types": [
+        "research-metric",
+        "numerical-invariant",
+        "research-output",
+        "external-service"
+      ],
+      "paths": [
+        "abliteralus/evaluation/advanced_metrics.py",
+        "abliteralus/evaluation/baselines.py",
+        "abliteralus/evaluation/benchmark_plots.py",
+        "abliteralus/evaluation/benchmarks.py",
+        "abliteralus/evaluation/evaluator.py",
+        "abliteralus/evaluation/heretic_eval.py",
+        "abliteralus/evaluation/lm_eval_integration.py",
+        "abliteralus/evaluation/metrics.py"
+      ],
+      "required_tests": [
+        "tests/test_advanced_metrics.py",
+        "tests/test_benchmark_plots.py",
+        "tests/test_benchmarks.py",
+        "tests/test_evaluator.py",
+        "tests/test_evaluation_reporting_contracts.py",
+        "tests/test_heretic_eval.py",
+        "tests/test_lm_eval_reporting_contracts.py",
+        "tests/test_metrics.py",
+        "tests/test_property_contracts.py",
+        "tests/test_remaining_cpu_contracts.py"
+      ]
+    },
+    {
+      "id": "reporting",
+      "owner": "research reporting maintainers",
+      "description": "Report schemas, deterministic serialization, plotting, and persisted result artifacts",
+      "contract_types": [
+        "research-output",
+        "persistence",
+        "numerical-invariant"
+      ],
+      "paths": [
+        "abliteralus/reporting/report.py"
+      ],
+      "required_tests": [
+        "tests/test_report.py",
+        "tests/test_evaluation_reporting_contracts.py",
+        "tests/test_lm_eval_reporting_contracts.py"
+      ]
+    },
+    {
+      "id": "ablation-strategies",
+      "owner": "ablation strategy maintainers",
+      "description": "Strategy registration, enumeration, architecture navigation, mutation, and restoration behavior",
+      "contract_types": [
+        "ablation-strategy",
+        "architecture-selection",
+        "model-mutation"
+      ],
+      "paths": [
+        "abliteralus/strategies/base.py",
+        "abliteralus/strategies/embedding_ablation.py",
+        "abliteralus/strategies/ffn_ablation.py",
+        "abliteralus/strategies/head_pruning.py",
+        "abliteralus/strategies/layer_removal.py",
+        "abliteralus/strategies/registry.py",
+        "abliteralus/strategies/utils.py"
+      ],
+      "required_tests": [
+        "tests/test_strategies.py",
+        "tests/test_strategy_navigation_contracts.py",
+        "tests/test_gemma4_support.py",
+        "tests/test_mistral_architecture_contracts.py",
+        "tests/test_study_presets.py"
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "path": "abliteralus/cli.py",
+      "risk_class": "cpu-contract",
+      "risk": "public parsing, validation, dispatch, and local/remote option propagation",
+      "required_tests": [
+        "tests/test_cli.py",
+        "tests/test_cli_boundaries.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/config.py",
+      "risk_class": "cpu-contract",
+      "risk": "configuration defaults, normalization, validation, and serialization",
+      "required_tests": [
+        "tests/test_config.py",
+        "tests/test_config_properties.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/architecture_profiles.py",
+      "risk_class": "cpu-contract",
+      "risk": "architecture detection and projection-path contracts",
+      "required_tests": [
+        "tests/test_architecture_profiles.py",
+        "tests/test_gemma4_support.py",
+        "tests/test_mistral_architecture_contracts.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/strategies/utils.py",
+      "risk_class": "mixed-runtime",
+      "risk": "architecture-specific layer, attention, FFN, and embedding navigation",
+      "required_tests": [
+        "tests/test_gemma4_support.py",
+        "tests/test_mistral_architecture_contracts.py",
+        "tests/test_strategies.py",
+        "tests/test_strategy_navigation_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/community.py",
+      "risk_class": "cpu-contract",
+      "risk": "contribution schema, aggregation, and atomic persistence",
+      "required_tests": [
+        "tests/test_community.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/telemetry.py",
+      "risk_class": "cpu-contract",
+      "risk": "research telemetry schema, aggregation, and filesystem behavior",
+      "required_tests": [
+        "tests/test_telemetry.py",
+        "tests/test_telemetry_failure_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/reporting/report.py",
+      "risk_class": "cpu-contract",
+      "risk": "report schema, output paths, serialization, and plotting contracts",
+      "required_tests": [
+        "tests/test_report.py",
+        "tests/test_evaluation_reporting_contracts.py",
+        "tests/test_lm_eval_reporting_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/evaluation/metrics.py",
+      "risk_class": "cpu-contract",
+      "risk": "research metric semantics and numerical invariants",
+      "required_tests": [
+        "tests/test_metrics.py",
+        "tests/test_property_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/evaluation/advanced_metrics.py",
+      "risk_class": "cpu-contract",
+      "risk": "refusal detection, confidence intervals, and robustness metrics",
+      "required_tests": [
+        "tests/test_advanced_metrics.py",
+        "tests/test_property_contracts.py",
+        "tests/test_remaining_cpu_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/device.py",
+      "risk_class": "mixed-runtime",
+      "risk": "device and dtype selection across CPU, CUDA, and Apple backends",
+      "required_tests": [
+        "tests/test_device_boundaries.py"
+      ],
+      "conditional_gates": [
+        "cuda-runtime",
+        "jetson-runtime",
+        "mps-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/runtime_contracts.py",
+      "risk_class": "cpu-contract",
+      "risk": "model request, memory, architecture scale, and dtype capability decisions",
+      "required_tests": [
+        "tests/test_runtime_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/models/loader.py",
+      "risk_class": "mixed-runtime",
+      "risk": "model loading, cache, architecture, quantization, and device-map boundaries",
+      "required_tests": [
+        "tests/test_loader_boundaries.py",
+        "tests/test_mistral_architecture_contracts.py",
+        "tests/test_offline_integration.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime",
+        "cuda-runtime",
+        "jetson-runtime",
+        "bitsandbytes-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/models/quant_dequant.py",
+      "risk_class": "mixed-runtime",
+      "risk": "FP8 and NVFP4 format detection, numerical dequantization, Hub revision integrity, and checkpoint materialization",
+      "required_tests": [
+        "tests/test_quant_dequant.py"
+      ],
+      "conditional_gates": [
+        "cuda-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/models/offload_surgery.py",
+      "risk_class": "mixed-runtime",
+      "risk": "transactional logical-parameter mutation across live, CPU-offloaded, disk-backed, and CUDA execution layouts",
+      "required_tests": [
+        "tests/test_offload_surgery.py",
+        "tests/conditional/test_cuda_runtime.py"
+      ],
+      "conditional_gates": [
+        "cuda-runtime",
+        "jetson-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/mlx_backend.py",
+      "risk_class": "mixed-runtime",
+      "risk": "MLX model discovery, tensor placement, mutation, and persistence",
+      "required_tests": [
+        "tests/test_mlx_backend_boundaries.py"
+      ],
+      "conditional_gates": [
+        "mlx-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/persistence_contracts.py",
+      "risk_class": "cpu-contract",
+      "risk": "checkpoint sizing, metadata serialization, atomic promotion, rollback, and cleanup",
+      "required_tests": [
+        "tests/test_checkpoint_atomicity.py",
+        "tests/test_persistence_contracts.py",
+        "tests/test_persistence_pipeline.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/abliterate.py",
+      "risk_class": "mixed-runtime",
+      "risk": "core model mutation, checkpoint, evaluation, and save pipeline",
+      "required_tests": [
+        "tests/test_abliterate.py",
+        "tests/test_abliterate_extended.py",
+        "tests/test_checkpoint_atomicity.py",
+        "tests/test_persistence_contracts.py",
+        "tests/test_persistence_pipeline.py",
+        "tests/test_projection_math_contracts.py",
+        "tests/test_offline_integration.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/auto_obliterate.py",
+      "risk_class": "mixed-runtime",
+      "risk": "automated search state, retry, scoring, and checkpoint behavior",
+      "required_tests": [
+        "tests/test_auto_obliterate.py",
+        "tests/test_remaining_cpu_contracts.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/bayesian_optimizer.py",
+      "risk_class": "conditional-runtime",
+      "risk": "optional optimizer trials over repeated live model mutation and evaluation",
+      "required_tests": [
+        "tests/test_bayesian_optimizer_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_model_download_runtime.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/evaluation/baselines.py",
+      "risk_class": "mixed-runtime",
+      "risk": "control baseline mutation and comparative evaluation",
+      "required_tests": [
+        "tests/test_evaluator.py",
+        "tests/test_evaluation_reporting_contracts.py",
+        "tests/conditional/test_model_download_runtime.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/evaluation/evaluator.py",
+      "risk_class": "mixed-runtime",
+      "risk": "dataset bounds, causal/classifier evaluation, and result semantics",
+      "required_tests": [
+        "tests/test_evaluator.py",
+        "tests/test_evaluation_reporting_contracts.py",
+        "tests/test_offline_integration.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/informed_pipeline.py",
+      "risk_class": "mixed-runtime",
+      "risk": "multi-stage pipeline orchestration and stage-result contracts",
+      "required_tests": [
+        "tests/test_informed_pipeline.py",
+        "tests/test_informed_pipeline_contracts.py",
+        "tests/test_offline_integration.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/lora_ablation.py",
+      "risk_class": "conditional-runtime",
+      "risk": "optional adapter construction and validation against live projections",
+      "required_tests": [
+        "tests/test_module_imports.py",
+        "tests/conditional/test_model_download_runtime.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/sweep.py",
+      "risk_class": "conditional-runtime",
+      "risk": "parameter sweeps over repeated mutation and evaluation",
+      "required_tests": [
+        "tests/test_module_imports.py",
+        "tests/test_sweep_contracts.py",
+        "tests/conditional/test_model_download_runtime.py"
+      ],
+      "conditional_gates": [
+        "model-download-runtime"
+      ]
+    },
+    {
+      "path": "abliteralus/evaluation/heretic_eval.py",
+      "risk_class": "mixed-runtime",
+      "risk": "publication evaluation prompts, classifiers, scoring, and external adapters",
+      "required_tests": [
+        "tests/test_heretic_eval.py",
+        "tests/conditional/test_external_evaluation_runtime.py"
+      ],
+      "conditional_gates": [
+        "external-evaluation"
+      ]
+    },
+    {
+      "path": "abliteralus/evaluation/lm_eval_integration.py",
+      "risk_class": "mixed-runtime",
+      "risk": "external benchmark adapter arguments, metric extraction, measured-zero semantics, and comparison output",
+      "required_tests": [
+        "tests/test_lm_eval_reporting_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_external_evaluation_runtime.py"
+      ],
+      "conditional_gates": [
+        "external-evaluation"
+      ]
+    },
+    {
+      "path": "abliteralus/tourney.py",
+      "risk_class": "mixed-runtime",
+      "risk": "multi-model tournament mutation, comparison, and optional publication",
+      "required_tests": [
+        "tests/test_tourney_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_external_evaluation_runtime.py"
+      ],
+      "conditional_gates": [
+        "external-evaluation"
+      ]
+    },
+    {
+      "path": "abliteralus/tourney_contracts.py",
+      "risk_class": "cpu-contract",
+      "risk": "checkpoint document parsing and version validation",
+      "required_tests": [
+        "tests/test_tourney_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/bestiary_sync.py",
+      "risk_class": "conditional-runtime",
+      "risk": "external catalog synchronization and malformed service responses",
+      "required_tests": [
+        "tests/test_bestiary_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_network_services.py"
+      ],
+      "conditional_gates": [
+        "network-services"
+      ]
+    },
+    {
+      "path": "abliteralus/models_client.py",
+      "risk_class": "conditional-runtime",
+      "risk": "catalog resolution across operator files and network services",
+      "required_tests": [
+        "tests/test_models_client_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_network_services.py"
+      ],
+      "conditional_gates": [
+        "network-services"
+      ]
+    },
+    {
+      "path": "abliteralus/watchtower.py",
+      "risk_class": "conditional-runtime",
+      "risk": "scheduled scans, queue state, and live service responses",
+      "required_tests": [
+        "tests/test_watchtower_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_network_services.py"
+      ],
+      "conditional_gates": [
+        "network-services"
+      ]
+    },
+    {
+      "path": "abliteralus/credential_sources.py",
+      "risk_class": "cpu-contract",
+      "risk": "credential source precedence, mounted-secret validation, and broker execution boundaries",
+      "required_tests": [
+        "tests/test_secrets.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/service_contracts.py",
+      "risk_class": "cpu-contract",
+      "risk": "catalog validation, external record normalization, and scheduler lifecycle decisions",
+      "required_tests": [
+        "tests/test_models_client_contracts.py",
+        "tests/test_watchtower_contracts.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/interactive.py",
+      "risk_class": "mixed-runtime",
+      "risk": "interactive terminal prompts and operator decision flow",
+      "required_tests": [
+        "tests/test_cli.py",
+        "tests/test_interactive_contracts.py",
+        "tests/conditional/test_operator_ui.py"
+      ],
+      "conditional_gates": [
+        "operator-ui"
+      ]
+    },
+    {
+      "path": "abliteralus/local_ui.py",
+      "risk_class": "mixed-runtime",
+      "risk": "Gradio construction, launch configuration, authentication, and signals",
+      "required_tests": [
+        "tests/test_cli.py",
+        "tests/test_local_ui_contracts.py",
+        "tests/test_local_ui_portability.py",
+        "tests/conditional/test_operator_ui.py"
+      ],
+      "conditional_gates": [
+        "operator-ui"
+      ]
+    },
+    {
+      "path": "abliteralus/ui_watchtower.py",
+      "risk_class": "mixed-runtime",
+      "risk": "service-backed UI tabs and scheduler controls",
+      "required_tests": [
+        "tests/test_ui_watchtower_contracts.py",
+        "tests/test_module_imports.py",
+        "tests/conditional/test_operator_ui.py"
+      ],
+      "conditional_gates": [
+        "operator-ui"
+      ]
+    },
+    {
+      "path": "abliteralus/remote.py",
+      "risk_class": "mixed-runtime",
+      "risk": "SSH discovery, quoting, execution, cancellation, and result synchronization",
+      "required_tests": [
+        "tests/test_remote_boundaries.py",
+        "tests/conditional/test_remote_runtime.py"
+      ],
+      "conditional_gates": [
+        "remote-execution"
+      ]
+    },
+    {
+      "path": "abliteralus/remote_contracts.py",
+      "risk_class": "cpu-contract",
+      "risk": "remote target validation, GPU selection normalization, and shell-safe command construction",
+      "required_tests": [
+        "tests/test_remote_contracts.py",
+        "tests/test_remote_boundaries.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/capability_check.py",
+      "risk_class": "cpu-contract",
+      "risk": "MMLU capability comparison between abliterated and stock models",
+      "contract_owner": "ABLITERALUS maintainers",
+      "required_tests": [
+        "tests/test_capability_check.py"
+      ],
+      "conditional_gates": []
+    },
+    {
+      "path": "abliteralus/restore_multimodal.py",
+      "risk_class": "cpu-contract",
+      "risk": "merge abliterated text weights back into full multimodal model",
+      "required_tests": [
+        "tests/test_restore_multimodal.py"
+      ],
+      "conditional_gates": [],
+      "contract_owner": "ABLITERALUS maintainers"
+    },
+    {
+      "path": "abliteralus/blend.py",
+      "risk_class": "cpu-contract",
+      "risk": "complementary abliteration blending",
+      "contract_owner": "ABLITERALUS maintainers",
+      "required_tests": [
+        "tests/test_blend.py"
+      ],
+      "conditional_gates": []
+    }
+  ]
+}
