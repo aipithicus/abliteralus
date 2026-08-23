@@ -13,10 +13,14 @@ Pipeline (see manifest.toml):
   5. verify   no forbidden imports remain anywhere in the package
   6. commit   the tree on the local ``shadow`` branch via git plumbing (working tree untouched);
               first run also creates ``main`` from it and checks it out
-  7. report   unmapped files, seam counts, files changed upstream since the last shadow, and
-              which of those you have also modified on ``main`` (the merges that need eyes)
+  7. report   unmapped files, seam counts, files changed upstream since the last shadow, which of
+              those you have also modified on ``main``, and — if a ``fixes`` branch exists — the
+              pending-upstream series ``diff shadow..fixes`` and which of its files upstream touched
 
-Default is report-only. ``--merge`` merges ``shadow`` into ``main`` afterwards.
+Branches: ``shadow`` (machine-written) -> ``fixes`` (one commit per pending upstream fix) -> ``main``
+(research + lab-only adaptations). Default is report-only. ``--merge`` merges shadow into fixes in
+a temporary worktree (conflicts stop with the worktree kept), reports fixes absorbed upstream, then
+merges fixes (or shadow, if there is no fixes branch) into the checked-out ``main``.
 ``--self-test`` proves the rename is an involution on the selected set and that the seams
 leave no forbidden import behind, without writing anything.
 
@@ -534,6 +538,43 @@ def changed_since(lab: Path, prev: str | None, new: str) -> list[str]:
     return out.split("\n") if out else []
 
 
+def branch_exists(lab: Path, name: str) -> bool:
+    return bool(git(["rev-parse", "-q", "--verify", f"refs/heads/{name}"], lab, check=False))
+
+
+def diff_names(lab: Path, a: str, b: str) -> set[str]:
+    out = git(["diff", "--name-only", a, b], lab)
+    return set(out.split("\n")) if out else set()
+
+
+def merge_via_worktree(lab: Path, target: str, source: str) -> tuple[bool, Path | None]:
+    """Merge ``source`` into branch ``target`` without disturbing the checked-out tree.
+
+    Uses a temporary worktree. On a clean merge the worktree is removed and (True, None) is
+    returned; on conflicts the worktree is kept for manual resolution and (False, path) is
+    returned.
+    """
+    path = Path(tempfile.mkdtemp(prefix="shadow_sync-")) / f"{target}-wt"
+    git(["worktree", "add", "-q", str(path), target], lab)
+    proc = subprocess.run(["git", "merge", "--no-edit", source], cwd=str(path), capture_output=True)
+    if proc.returncode != 0:
+        return False, path
+    git(["worktree", "remove", "--force", str(path)], lab, check=False)
+    return True, None
+
+
+def print_pending(lab: Path, base: str, pending: set[str], upstream_touched: set[str]) -> None:
+    print(f"\npending upstream (fixes not yet in shadow {base[:12]}): {len(pending)} file(s)")
+    if pending:
+        stat = git(["diff", "--stat", base, "fixes"], lab)
+        for line in stat.split("\n"):
+            print(f"    {line}")
+    if upstream_touched:
+        print("upstream touched files in the pending series — the fixes merge needs eyes:")
+        for f in sorted(upstream_touched):
+            print(f"    {f}")
+
+
 def main_modified_files(lab: Path, prev_shadow: str | None) -> set[str]:
     if not prev_shadow or not git(["rev-parse", "-q", "--verify", "refs/heads/main"], lab, check=False):
         return set()
@@ -668,7 +709,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lab", type=Path, default=LAB_ROOT, help="lab root (default: this repo)")
     ap.add_argument("--ref", default="main", help="fork ref to shadow (default: main)")
     ap.add_argument("--sync-fork", action="store_true", help="fast-forward the fork's branch from its upstream remote first")
-    ap.add_argument("--merge", action="store_true", help="merge shadow into main after committing")
+    ap.add_argument("--merge", action="store_true",
+                    help="after committing: merge shadow into fixes (if that branch exists), then fixes/shadow into main")
     ap.add_argument("--dry-run", action="store_true", help="build and report only; no git writes")
     ap.add_argument("--self-test", action="store_true", help="verify rename involution and seam integrity; no writes")
     args = ap.parse_args(argv)
@@ -708,16 +750,39 @@ def main(argv: list[str] | None = None) -> int:
             rep["prev_fork_commit"] = m.group(1) if m else None
         first_run = ensure_main(lab, commit or prev)  # type: ignore[arg-type]
         changed = changed_since(lab, prev, commit) if commit else []
+        has_fixes = branch_exists(lab, "fixes")
+        # Pending-upstream series, measured against the shadow `fixes` is currently based on.
+        pending_before = diff_names(lab, prev, "fixes") if (has_fixes and prev) else set()
         print_report(rep, ref_sha, ref_date, commit, prev, changed, main_mod, first_run, False)
-        if args.merge and commit and prev and not first_run:
-            if git(["status", "--porcelain", "--untracked-files=no"], lab):
-                die("main has uncommitted tracked changes; commit or stash before --merge")
-            cur = git(["rev-parse", "--abbrev-ref", "HEAD"], lab)
-            if cur != "main":
-                die(f"checked-out branch is {cur!r}, expected 'main' for --merge")
-            proc = subprocess.run(["git", "merge", "--no-edit", "shadow"], cwd=str(lab))
-            print("merge:", "clean" if proc.returncode == 0 else "CONFLICTS — resolve, then git commit")
-            return proc.returncode
+        if has_fixes:
+            upstream_touched = {line.partition("\t")[2] for line in changed} & pending_before
+            print_pending(lab, prev or commit, pending_before, upstream_touched)  # type: ignore[arg-type]
+        if not args.merge or first_run:
+            return 0
+        if git(["status", "--porcelain", "--untracked-files=no"], lab):
+            die("main has uncommitted tracked changes; commit or stash before --merge")
+        cur = git(["rev-parse", "--abbrev-ref", "HEAD"], lab)
+        if cur != "main":
+            die(f"checked-out branch is {cur!r}, expected 'main' for --merge")
+        source = "shadow"
+        if has_fixes:
+            if commit:  # shadow moved: bring it into fixes first, in a temporary worktree
+                ok, wt = merge_via_worktree(lab, "fixes", "shadow")
+                if not ok:
+                    print(f"merge shadow -> fixes: CONFLICTS. Resolve in {wt}, `git commit`, then\n"
+                          f"  git -C {lab} worktree remove --force {wt}\n  git -C {lab} merge fixes")
+                    return 1
+                print("merge shadow -> fixes: clean")
+                pending_after = diff_names(lab, "shadow", "fixes")
+                absorbed = sorted(pending_before - pending_after)
+                if absorbed:
+                    print("absorbed upstream (dropped out of the pending series — close the ledger entries):")
+                    for f in absorbed:
+                        print(f"    {f}")
+            source = "fixes"
+        proc = subprocess.run(["git", "merge", "--no-edit", source], cwd=str(lab))
+        print(f"merge {source} -> main:", "clean" if proc.returncode == 0 else "CONFLICTS — resolve, then git commit")
+        return proc.returncode
     return 0
 
 

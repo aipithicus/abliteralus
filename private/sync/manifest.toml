@@ -23,6 +23,7 @@ index_url = "https://download.pytorch.org/whl/cu130"
 [include]
 paths = [
   "pyproject.toml",
+  ".gitignore",
   "CONTRIBUTING.md",
   "obliteratus/__init__.py",
   "obliteratus/py.typed",
@@ -97,7 +98,7 @@ paths = [
 paths = [
   "README.md", "LICENSE", "SECURITY.md", "AGENTS.md", "AIWG.md", "WORKSPACE.md", "CLAUDE.md",
   "Dockerfile", "app.py", "index.html", "requirements.txt", "requirements-apple.txt", "uv.lock",
-  ".gitignore", ".gitattributes", ".dockerignore", ".pre-commit-config.yaml",
+  ".gitattributes", ".dockerignore", ".pre-commit-config.yaml",
   ".aiwg/**", ".github/**", "ci/**", "scripts/**", "deploy/**", "hf-spaces/**",
   "notebooks/**", "paper/**", "examples/**", "docs/platforms/**", "docs/index.html",
   "obliteratus/__main__.py", "obliteratus/cli.py", "obliteratus/runner.py",
