@@ -102,7 +102,7 @@ No `PYTORCH_CUDA_ALLOC_CONF` workaround is needed: the `fixes` branch carries th
 `expandable_segments` fix (identical to the fork branch `fix/cuda-alloc-windows`), merged into
 `main`. When upstream absorbs it, the next sync reports it as absorbed.
 
-Baseline on this machine (fork b0da692, `fixes` through bb61464): **1178 passed, 0 failed,
+Baseline on this machine (fork b0da692, `fixes` through 5b1c440): **1188 passed, 0 failed,
 8 skipped, 77 % coverage**. The skips are the seven symlink-privilege cases (capability-probed;
 they run on Linux or with Windows Developer Mode) plus one upstream skip. Before the portability
 fixes on `fixes`, the same tree had 10 Windows-only failures.
