@@ -83,10 +83,10 @@ No `PYTORCH_CUDA_ALLOC_CONF` workaround is needed: the `fixes` branch carries th
 `expandable_segments` fix (identical to the fork branch `fix/cuda-alloc-windows`), merged into
 `main`. When upstream absorbs it, the next sync reports it as absorbed.
 
-Baseline on this machine (fork b0da692, transform as of 2026-08-22): **1173 passed, 10 failed,
-1 skipped, 77 % coverage**. The 10 are Windows-only and not extraction artifacts — seven symlink
-tests (`WinError 1314`, needs Developer Mode/admin), two loader-retry tests asserting POSIX path
-separators, one `os.sysconf` call. They pass on Linux.
+Baseline on this machine (fork b0da692, `fixes` through bb61464): **1178 passed, 0 failed,
+8 skipped, 77 % coverage**. The skips are the seven symlink-privilege cases (capability-probed;
+they run on Linux or with Windows Developer Mode) plus one upstream skip. Before the portability
+fixes on `fixes`, the same tree had 10 Windows-only failures.
 
 What the transform prunes from the vendored tests (all reported on every sync): tests that
 reference a non-vendored module, a stubbed network library, an excluded top-level package such
