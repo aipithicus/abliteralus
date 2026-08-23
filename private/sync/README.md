@@ -37,6 +37,16 @@ git merge fixes                           # on main
 
 `git diff shadow~1 shadow` is the upstream changelog for the core, already renamed.
 
+## Write-back
+
+`writeback.py <lab-commit> --branch fix/<name>` turns one `fixes` commit into a signed branch on the
+fork, based on the fork's `main`: `git format-patch` → reverse the codename (contents and paths) →
+strip lab-only message lines → **scrub gate** (identity tokens and the codename must be absent;
+private-work vocabulary only warns) → `git am -S --3way` → Ruff F and pytest on the touched files in
+the fork's locked CPU environment. A `Lab-Commit:` trailer records provenance; `--list` shows which
+entries are already exported (by trailer, or by patch-id for branches made by hand). One ledger
+entry = one `fixes` commit = one fork branch = one upstream PR. Pushing is always a separate, manual step.
+
 ## Commands (run from the lab root)
 
 ```
@@ -46,6 +56,8 @@ python private/sync/shadow_sync.py                    # commit a new shadow; rep
 python private/sync/shadow_sync.py --sync-fork        # first fast-forward the fork's main from `upstream` (ff-only)
 python private/sync/shadow_sync.py --merge            # ...then shadow -> fixes -> main
 python private/sync/airgap_check.py                   # sockets blocked: import every module, poke sentinels
+python private/sync/writeback.py --list               # pending series and which entries are already in the fork
+python private/sync/writeback.py <lab-commit> --branch fix/<name>   # re-author one fixes commit as a fork branch
 ```
 
 The fork needs an `upstream` remote for `--sync-fork`:
