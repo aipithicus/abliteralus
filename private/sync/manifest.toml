@@ -25,6 +25,8 @@ paths = [
   "pyproject.toml",
   ".gitignore",
   "CONTRIBUTING.md",
+  "ci/test-risk-map.json",
+  "ci/pr-test-policy.json",
   "obliteratus/__init__.py",
   "obliteratus/py.typed",
   "obliteratus/abliterate.py",
