@@ -6,7 +6,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from abliteralus.analysis.whitened_svd import WhitenedSVDExtractor, WhitenedSVDResult
+from abliteralus.analysis.whitened_svd import (
+    WhitenedSVDExtractor,
+    WhitenedSVDResult,
+    _orthonormal_row_basis,
+)
 from abliteralus.analysis.cross_layer import CrossLayerAlignmentAnalyzer, CrossLayerResult
 from abliteralus.analysis.activation_probing import ActivationProbe, ProbeResult
 
@@ -255,6 +259,24 @@ class TestWhitenedSVD:
         assert WhitenedSVDExtractor.compare_with_standard(
             near_dup, torch.stack([e[1], e[2]])
         )["subspace_principal_cosines"] == pytest.approx([0.0], abs=1e-6)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+    def test_principal_angle_diagnostic_runs_on_cpu_in_float64(self, dtype):
+        """The rank-revealing basis is a small diagnostic: it must land on the CPU in
+        float64 whatever the input dtype, since accelerators such as MPS have no
+        float64 and the caller only consumes Python floats."""
+        e = torch.eye(6)
+        rows = torch.stack([e[0], e[0], e[2]]).to(dtype)
+
+        basis = _orthonormal_row_basis(rows)
+        assert basis.device.type == "cpu"
+        assert basis.dtype == torch.float64
+        assert basis.shape == (2, 6)  # duplicate row collapsed
+        assert rows.dtype == dtype  # input untouched
+
+        result = self._result_with_directions(rows)
+        comparison = WhitenedSVDExtractor.compare_with_standard(result, torch.stack([e[0], e[1]]).to(dtype))
+        assert comparison["subspace_principal_cosines"] == pytest.approx([1.0, 0.0], abs=1e-3)
 
     def test_handles_3d_activations(self):
         """Should handle activations with an extra batch dimension."""

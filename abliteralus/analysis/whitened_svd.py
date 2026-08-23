@@ -42,9 +42,12 @@ def _orthonormal_row_basis(rows: torch.Tensor, rel_tol: float = 1e-6) -> torch.T
 
     Uses the SVD and keeps right singular vectors whose singular value exceeds
     ``rel_tol`` times the largest, so dependent or duplicate rows do not add a
-    fictitious dimension. Returns a ``(rank, d)`` float64 tensor; rank may be 0.
+    fictitious dimension. Returns a ``(rank, d)`` CPU float64 tensor; rank may
+    be 0. This is a small diagnostic computation (k rows of hidden_dim), so it
+    is deliberately moved to the CPU: float64 is not available on MPS, and the
+    caller only consumes the resulting cosines as Python floats.
     """
-    work = rows.detach().to(dtype=torch.float64)
+    work = rows.detach().to(device="cpu", dtype=torch.float64)
     if work.dim() == 1:
         work = work.unsqueeze(0)
     if work.numel() == 0 or not torch.isfinite(work).all():
