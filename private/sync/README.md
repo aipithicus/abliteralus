@@ -52,11 +52,10 @@ not interchangeable with fork-produced ones; cached activations (plain safetenso
 uv sync --extra dev                 # CUDA torch per pyproject; fresh uv.lock (never the fork's)
 uv run python private/sync/airgap_check.py
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8 \
 uv run pytest -q                    # the vendored core tests are the extraction's acceptance test
 ```
 
-`PYTORCH_CUDA_ALLOC_CONF` is no longer required: `main` carries a local fix to `device.py`
+No `PYTORCH_CUDA_ALLOC_CONF` workaround is needed: `main` carries a local fix to `device.py`
 (skip `expandable_segments` on win32) identical to the fork branch `fix/cuda-alloc-windows`
 proposed upstream. When upstream merges it, the shadow merge is a no-op for that hunk; if upstream
 fixes it differently, the merge conflicts and upstream's version wins.
