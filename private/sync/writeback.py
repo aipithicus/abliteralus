@@ -110,8 +110,31 @@ def _patch_id(fork: Path, patch_text: str) -> str:
     return out.split(" ")[0] if out else ""
 
 
+EXPORT_RECORD = HERE / "exported.toml"
+
+
+def recorded_exports() -> dict[str, str]:
+    """lab commit sha -> fork branch, for exports that can no longer be matched by patch-id
+    (squashed branches). Maintained by ``--squash``; plain TOML, one table per record."""
+    if not EXPORT_RECORD.exists():
+        return {}
+    with open(EXPORT_RECORD, "rb") as fh:
+        data = tomllib.load(fh)
+    return {rec["lab"]: rec["branch"] for rec in data.get("exported", [])}
+
+
+def record_exports(pairs: list[tuple[str, str]], how: str) -> None:
+    lines = [] if not EXPORT_RECORD.exists() else [EXPORT_RECORD.read_text(encoding="utf-8").rstrip("\n")]
+    for lab_sha, branch in pairs:
+        lines.append(f'\n[[exported]]\nlab = "{lab_sha}"\nbranch = "{branch}"\nhow = "{how}"')
+    EXPORT_RECORD.write_text("\n".join(lines).lstrip("\n") + "\n", encoding="utf-8", newline="\n")
+
+
 def already_exported(fork: Path, commit: str, patch: str | None = None, base: str = "main") -> str | None:
-    """Find a fork branch carrying this lab commit: by Lab-Commit trailer, else by patch-id."""
+    """Find a fork branch carrying this lab commit: by record, by Lab-Commit trailer, else by patch-id."""
+    recorded = recorded_exports().get(commit)
+    if recorded:
+        return f"{recorded} (recorded)"
     out = git(["log", "--all", "--format=%h %D", f"--grep=Lab-Commit: {commit}"], fork).strip()
     if out:
         return out.split("\n")[0]
@@ -130,6 +153,48 @@ def already_exported(fork: Path, commit: str, patch: str | None = None, base: st
     return None
 
 
+def cmd_squash(lab: Path, fork: Path, branch: str, base: str, ren: Renamer, no_verify: bool) -> int:
+    """Squash an unpushed fork branch to one signed, subject-only commit and record the lab mapping."""
+    if not git(["rev-parse", "-q", "--verify", f"refs/heads/{branch}"], fork, check=False).strip():
+        die(f"fork branch {branch!r} does not exist")
+    if git(["rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}"], fork, check=False).strip():
+        die(f"origin/{branch} exists; never rewrite published history")
+    if git(["status", "--porcelain", "--untracked-files=no"], fork).strip():
+        die("fork has uncommitted tracked changes; commit or stash first")
+    shas = git(["rev-list", "--reverse", "--no-merges", f"{base}..{branch}"], fork).split()
+    if len(shas) < 2:
+        die(f"{branch} has {len(shas)} commit(s) on {base}; nothing to squash")
+    # Which lab commits does this branch carry? Match each fork commit back by patch-id so the
+    # mapping survives the squash.
+    lab_log = git(["log", "--no-merges", "--format=%H", "shadow..fixes"], lab).split()
+    fork_ids = {_patch_id(fork, git(["show", "--format=", s], fork)): s for s in shas}
+    carried: list[tuple[str, str]] = []
+    for lab_sha in lab_log:
+        patch, _, _, _ = export_patch(lab, lab_sha, ren)
+        if _patch_id(fork, patch) in fork_ids:
+            carried.append((lab_sha, branch))
+    subject = git(["log", "-1", "--format=%s", shas[0]], fork).strip()
+    touched = git(["diff", "--name-only", base, branch], fork).split()
+    original = git(["rev-parse", "--abbrev-ref", "HEAD"], fork).strip()
+    git(["checkout", "-q", branch], fork)
+    git(["reset", "-q", "--soft", base], fork)
+    git(["commit", "-q", "-S", "-m", subject], fork)
+    head = git(["log", "-1", "--format=%h %G? %GS"], fork).strip()
+    ok = True if no_verify else verify(fork, touched)  # verify on the squashed branch itself
+    git(["checkout", "-q", original], fork)
+    record_exports(carried, "squash")
+    draft = LAB_ROOT / "private" / "pr-drafts" / f"{branch.replace('/', '__')}.md"
+    if draft.exists():
+        text = draft.read_text(encoding="utf-8")
+        short = head.split(" ")[0]
+        text = re.sub(r"(<!-- branch [^,]+, head )\w+", rf"\g<1>{short}", text, count=1)
+        text = re.sub(r"(Exact head SHA: `)\w+(`)", rf"\g<1>{short}\2", text, count=1)
+        draft.write_text(text, encoding="utf-8", newline="\n")
+    print(f"squashed {len(shas)} commits -> {head}  [{subject}]")
+    print(f"recorded {len(carried)} lab commit(s) as exported to {branch}")
+    return 0 if ok else 1
+
+
 def cmd_list(lab: Path, fork: Path) -> int:
     log = git(["log", "--reverse", "--no-merges", "--format=%h %s", "shadow..fixes"], lab).strip()
     if not log:
@@ -143,7 +208,12 @@ def cmd_list(lab: Path, fork: Path) -> int:
         full = git(["rev-parse", sha], lab).strip()
         patch, _, _, _ = export_patch(lab, full, ren)
         state = already_exported(fork, full, patch)
-        mark = f"exported -> {state.split(' ', 1)[1] or state[:12]}" if state else "not exported"
+        if not state:
+            mark = "not exported"
+        elif state.endswith("(recorded)"):
+            mark = f"exported -> {state}"
+        else:
+            mark = f"exported -> {state.split(' ', 1)[1] or state[:12]}"
         print(f"  {line}    [{mark}]")
     return 0
 
@@ -258,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="only (re)write the PR description draft for an already-exported branch")
     ap.add_argument("--onto", action="store_true",
                     help="append to an existing (unpushed) fork branch instead of creating one")
+    ap.add_argument("--squash", action="store_true",
+                    help="squash the unpushed fork --branch to one signed subject-only commit and record the lab mapping")
     args = ap.parse_args(argv)
 
     manifest = load_manifest()
@@ -266,8 +338,12 @@ def main(argv: list[str] | None = None) -> int:
     ren = Renamer(manifest["rename"]["from"], manifest["rename"]["to"])
     if args.list:
         return cmd_list(lab, fork)
+    if args.squash:
+        if not args.branch:
+            ap.error("--squash requires --branch")
+        return cmd_squash(lab, fork, args.branch, args.base, ren, args.no_verify)
     if not args.commit or not args.branch:
-        ap.error("a lab commit and --branch are required (or use --list)")
+        ap.error("a lab commit and --branch are required (or use --list / --squash)")
 
     commit = git(["rev-parse", "--verify", f"{args.commit}^{{commit}}"], lab).strip()
     if not git(["branch", "--contains", commit, "fixes"], lab).strip():

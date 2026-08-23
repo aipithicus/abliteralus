@@ -1,6 +1,6 @@
 # fix(whitened_svd): take principal angles on orthonormalized bases
 
-<!-- branch fix/whitened-svd-principal-angles, head 00f7592. Paste into the upstream PR template; fill TBD cells from the
+<!-- branch fix/whitened-svd-principal-angles, head ce7524f. Paste into the upstream PR template; fill TBD cells from the
 writeback verification output and the fork's own checks. Scrub before posting. -->
 
 ## Summary
@@ -74,7 +74,7 @@ Files:
 
 ## Test evidence
 
-Exact head SHA: `00f7592`
+Exact head SHA: `ce7524f`
 
 | Check | Result | Evidence or notes |
 |---|---|---|

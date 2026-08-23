@@ -50,7 +50,9 @@ subject, no body, no trailers), so the fork commit keeps just the subject; the l
 seeds a PR-description draft in `private/pr-drafts/<branch>.md` laid out on the upstream PR
 template. `--list` shows which entries are already exported (matched by patch-id);
 `--draft-only` regenerates a draft for an exported branch; `--onto` appends a follow-up `fixes`
-commit (for example a review fix) to an existing, unpushed fork branch. One ledger entry = one
+commit (for example a review fix) to an existing, unpushed fork branch; `--squash` collapses an
+unpushed branch to one signed subject-only commit (first commit's subject) and records the lab
+commits it carries in `exported.toml`, since patch-id matching cannot survive a squash. One ledger entry = one
 fork branch = one upstream PR; a branch may carry more than one commit. Pushing is always a
 separate, manual step.
 
@@ -65,6 +67,8 @@ python private/sync/shadow_sync.py --merge            # ...then shadow -> fixes 
 python private/sync/airgap_check.py                   # sockets blocked: import every module, poke sentinels
 python private/sync/writeback.py --list               # pending series and which entries are already in the fork
 python private/sync/writeback.py <lab-commit> --branch fix/<name>   # re-author one fixes commit as a fork branch
+python private/sync/writeback.py <lab-commit> --branch fix/<name> --onto   # append a follow-up to that branch
+python private/sync/writeback.py --squash --branch fix/<name>    # unpushed branch -> one commit; lab mapping recorded
 ```
 
 The fork needs an `upstream` remote for `--sync-fork`:

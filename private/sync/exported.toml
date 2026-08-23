@@ -1,0 +1,19 @@
+[[exported]]
+lab = "2465e552a00e14194a310902665cb17b9566c948"
+branch = "fix/whitened-svd-principal-angles"
+how = "squash"
+
+[[exported]]
+lab = "1570f76967dfa034e406da4c9a50f0c2c0b94555"
+branch = "fix/whitened-svd-principal-angles"
+how = "squash"
+
+[[exported]]
+lab = "cf21a97cb3416460595a5a566c5875b8d330d745"
+branch = "fix/whitened-svd-principal-angles"
+how = "squash"
+
+[[exported]]
+lab = "bb61464a98b952c2e878ae483ee5e2ca4bb025d0"
+branch = "fix/whitened-svd-principal-angles"
+how = "squash"
