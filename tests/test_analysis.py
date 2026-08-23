@@ -180,6 +180,42 @@ class TestWhitenedSVD:
         )
         assert 0 <= subspace_comparison["subspace_principal_cosine"] <= 1.0
 
+    @staticmethod
+    def _result_with_directions(directions: torch.Tensor) -> WhitenedSVDResult:
+        k = directions.shape[0]
+        return WhitenedSVDResult(
+            layer_idx=0,
+            directions=directions,
+            whitened_directions=directions,
+            singular_values=torch.ones(k),
+            variance_explained=1.0,
+            condition_number=1.0,
+            effective_rank=float(k),
+        )
+
+    def test_compare_with_standard_principal_angles_use_orthonormal_bases(self):
+        """Whitened directions are unit-norm but not orthogonal; the principal
+        angles must come from orthonormalized bases, not from the raw rows."""
+        e = torch.eye(6)
+        theta = torch.tensor(25.0).deg2rad()
+        # Two unit rows spanning the e0-e1 plane at 25 degrees to each other.
+        skewed = torch.stack([e[0], torch.cos(theta) * e[0] + torch.sin(theta) * e[1]])
+        result = self._result_with_directions(skewed)
+
+        same_plane = WhitenedSVDExtractor.compare_with_standard(result, torch.stack([e[0], e[1]]))
+        assert same_plane["subspace_principal_cosine"] == pytest.approx(1.0, abs=1e-6)
+        assert same_plane["subspace_principal_cosines"] == pytest.approx([1.0, 1.0], abs=1e-6)
+
+        orthogonal_plane = WhitenedSVDExtractor.compare_with_standard(result, torch.stack([e[2], e[3]]))
+        assert orthogonal_plane["subspace_principal_cosines"] == pytest.approx([0.0, 0.0], abs=1e-6)
+
+        # Shares e0, second direction tilted 40 degrees off the skewed plane.
+        phi = torch.tensor(40.0).deg2rad()
+        tilted = torch.stack([e[0], torch.cos(phi) * e[1] + torch.sin(phi) * e[2]])
+        partial = WhitenedSVDExtractor.compare_with_standard(result, tilted)
+        assert partial["subspace_principal_cosines"] == pytest.approx([1.0, torch.cos(phi).item()], abs=1e-6)
+        assert all(0.0 <= c <= 1.0 for c in partial["subspace_principal_cosines"])
+
     def test_handles_3d_activations(self):
         """Should handle activations with an extra batch dimension."""
         torch.manual_seed(42)
