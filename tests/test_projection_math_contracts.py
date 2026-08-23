@@ -68,6 +68,33 @@ def test_orthogonalize_matches_reference_and_preserves_primary_orientation():
     assert actual[0] @ subspace[0] > 0
 
 
+def test_orthogonalize_returns_zero_rows_for_dependent_directions():
+    """A dependent row must not become a fictitious direction: on the surgery path
+    that direction would be projected out of the weights. It becomes a zero row,
+    which project_weight_against_direction treats as a no-op, and the rows after
+    it are orthogonalized against the real basis only."""
+    e = torch.eye(4, dtype=torch.float64)
+    subspace = torch.stack([e[0], e[0], e[1], e[0] + e[1]])
+
+    actual = orthogonalize_subspace_rows(subspace)
+
+    assert actual.shape == subspace.shape
+    assert torch.allclose(actual[0], e[0])
+    assert torch.all(actual[1] == 0)
+    assert torch.allclose(actual[2], e[1])
+    assert torch.all(actual[3] == 0)
+
+    weight = torch.randn(6, 4, dtype=torch.float64)
+    assert project_weight_against_direction(weight, actual[1]).projected is False
+
+    nearly = torch.stack([e[0], e[0] + 1e-9 * e[2]])
+    assert torch.all(orthogonalize_subspace_rows(nearly)[1] == 0)
+
+    independent = torch.stack([e[0], e[0] + 1e-3 * e[2]])
+    kept = orthogonalize_subspace_rows(independent)
+    assert torch.allclose(kept[1], e[2], atol=1e-12)
+
+
 def test_orthogonalize_returns_degenerate_inputs_without_allocating_new_tensor():
     single_row = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float64)
     empty = torch.empty((2, 0), dtype=torch.float64)
