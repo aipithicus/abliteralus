@@ -506,7 +506,9 @@ def commit_tree_to_shadow(lab: Path, tree_dir: Path, message: str) -> tuple[str 
     with tempfile.TemporaryDirectory() as td:
         index = Path(td) / "index"
         env = {"GIT_INDEX_FILE": str(index)}
-        git(["--git-dir", str(git_dir), "--work-tree", str(tree_dir), "add", "-A", "--", "."], tree_dir, env=env)
+        # --force: the shadow tree is exactly the manifest selection. A vendored .gitignore must
+        # not drop files that upstream tracks despite its own ignore rules.
+        git(["--git-dir", str(git_dir), "--work-tree", str(tree_dir), "add", "-A", "--force", "--", "."], tree_dir, env=env)
         tree = git(["--git-dir", str(git_dir), "write-tree"], lab, env=env)
     prev = git(["rev-parse", "-q", "--verify", "refs/heads/shadow"], lab, check=False) or None
     if prev:
