@@ -210,6 +210,25 @@ Not applicable.
     return path
 
 
+def append_pr_draft(branch: str, subject: str, body: str, touched: list[str], head: str) -> Path:
+    """Add a follow-up-commit section to an existing draft (created if missing) and refresh the head."""
+    path = LAB_ROOT / "private" / "pr-drafts" / f"{branch.replace('/', '__')}.md"
+    if not path.exists():
+        return write_pr_draft(branch, subject, body, touched, head)
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"(<!-- branch [^,]+, head )\w+", rf"\g<1>{head}", text, count=1)
+    text = re.sub(r"(Exact head SHA: `)\w+(`)", rf"\g<1>{head}\2", text, count=1)
+    files = "\n".join(f"- `{t}`" for t in touched)
+    section = f"\n### Follow-up commit — {subject}\n\n{body or 'TBD'}\n\nFiles:\n{files}\n"
+    marker = "\n### Files\n"
+    if marker in text:
+        text = text.replace(marker, section + marker, 1)
+    else:
+        text = text.rstrip("\n") + "\n" + section
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return path
+
+
 def verify(fork: Path, touched: list[str]) -> bool:
     py = [p for p in touched if p.endswith(".py")]
     tests = [p for p in py if p.startswith("tests/")]
@@ -259,7 +278,10 @@ def main(argv: list[str] | None = None) -> int:
         if not git(["rev-parse", "-q", "--verify", f"refs/heads/{args.branch}"], fork, check=False).strip():
             die(f"fork branch {args.branch!r} does not exist; export first")
         head = git(["rev-parse", "--short", args.branch], fork).strip()
-        print(f"PR description draft: {write_pr_draft(args.branch, subject, body, touched, head)}")
+        if args.onto:
+            print(f"PR description draft: {append_pr_draft(args.branch, subject, body, touched, head)}")
+        else:
+            print(f"PR description draft: {write_pr_draft(args.branch, subject, body, touched, head)}")
         return 0
     if prior:
         die(f"{commit[:12]} was already exported: {prior}")
@@ -297,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     head = git(["log", "-1", "--format=%h %G? %GS"], fork).strip()
     print(f"fork {args.branch}: {head}")
-    draft = write_pr_draft(args.branch, subject, body, touched, head.split(" ")[0])
+    draft = (append_pr_draft if args.onto else write_pr_draft)(args.branch, subject, body, touched, head.split(" ")[0])
     print(f"PR description draft: {draft}")
     ok = True if args.no_verify else verify(fork, touched)
     git(["checkout", "-q", original], fork)
