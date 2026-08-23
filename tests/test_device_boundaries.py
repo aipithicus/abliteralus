@@ -229,9 +229,20 @@ def test_mps_svd_dtype_uses_float32_without_requiring_mps_hardware():
 def test_configure_cuda_allocator(monkeypatch):
     monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
     monkeypatch.setattr(device, "is_cuda", lambda: True)
+    monkeypatch.setattr(device.sys, "platform", "linux")
     device.configure_cuda_alloc()
     assert device.os.environ["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
     monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "existing")
     device.configure_cuda_alloc()
     assert device.os.environ["PYTORCH_CUDA_ALLOC_CONF"] == "existing"
+
+
+def test_configure_cuda_allocator_leaves_windows_untouched(monkeypatch):
+    """expandable_segments is unsupported on Windows: torch warns and ignores it,
+    and the warnings-as-errors policy would fail any CUDA-allocating test there."""
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    monkeypatch.setattr(device, "is_cuda", lambda: True)
+    monkeypatch.setattr(device.sys, "platform", "win32")
+    device.configure_cuda_alloc()
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in device.os.environ

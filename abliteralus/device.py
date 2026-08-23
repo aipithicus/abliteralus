@@ -10,6 +10,7 @@ import gc
 import logging
 import os
 import platform
+import sys
 from dataclasses import dataclass
 
 import torch
@@ -323,6 +324,15 @@ def supports_device_map_auto(device: str | None = None) -> bool:
 # ---------------------------------------------------------------------------
 
 def configure_cuda_alloc() -> None:
-    """Set expandable_segments for CUDA if available."""
+    """Set expandable_segments for CUDA if available and supported.
+
+    ``expandable_segments`` relies on CUDA virtual-memory APIs that PyTorch only
+    implements on Linux. On Windows the setting is ignored with a ``UserWarning``
+    at the first CUDA allocation, which the repository's warnings-as-errors test
+    policy turns into a failure on any CUDA host. Leave the environment untouched
+    there so the default allocator is used silently.
+    """
+    if sys.platform == "win32":
+        return
     if is_cuda() and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
