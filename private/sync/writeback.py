@@ -66,20 +66,31 @@ class Renamer:
 _LAB_ONLY_LINES = re.compile(r"^(Ledger:|Pending upstream as fork branch).*\n?", re.M)
 
 
-def export_patch(lab: Path, commit: str, ren: Renamer) -> tuple[str, str, list[str]]:
-    """Return (patch text with codename reversed, subject, touched fork paths)."""
+def export_patch(lab: Path, commit: str, ren: Renamer) -> tuple[str, str, str, list[str]]:
+    """Return (patch with codename reversed and a subject-only message, subject, lab body, paths).
+
+    Upstream commits are subject-only; the rationale belongs in the PR description. The lab
+    commit's body (minus lab-only lines) is returned separately so it can seed that description.
+    """
     patch = git(["format-patch", "-1", "--stdout", "--no-signature", commit], lab)
-    subject = git(["log", "-1", "--format=%s", commit], lab).strip()
+    subject = ren.reverse(git(["log", "-1", "--format=%s", commit], lab).strip())
+    body = ren.reverse(git(["log", "-1", "--format=%b", commit], lab))
+    body = _LAB_ONLY_LINES.sub("", body).strip()
     patch = ren.reverse(patch)
-    patch = _LAB_ONLY_LINES.sub("", patch)
-    # Provenance trailer: inserted before the first diff header (end of the message body).
     head, sep, rest = patch.partition("\n---\n")
     if not sep:
         die("unexpected format-patch layout (no '---' separator)")
-    head = head.rstrip("\n") + f"\n\nLab-Commit: {commit}\n"
-    patch = head + sep + rest
+    # Keep the mail headers (From/Date/Subject), drop everything after them: subject-only message.
+    headers, seen_subject = [], False
+    for line in head.split("\n"):
+        if seen_subject and not line.startswith((" ", "\t")):
+            break  # end of a (possibly folded) Subject header
+        headers.append(line)
+        if line.startswith("Subject:"):
+            seen_subject = True
+    patch = "\n".join(headers) + "\n" + sep + rest
     touched = sorted(set(re.findall(r"^\+\+\+ b/(.+)$", patch, re.M)))
-    return patch, subject, touched
+    return patch, subject, body, touched
 
 
 def scrub(patch: str, codename: str) -> None:
@@ -130,11 +141,73 @@ def cmd_list(lab: Path, fork: Path) -> int:
     for line in log.split("\n"):
         sha = line.split(" ", 1)[0]
         full = git(["rev-parse", sha], lab).strip()
-        patch, _, _ = export_patch(lab, full, ren)
+        patch, _, _, _ = export_patch(lab, full, ren)
         state = already_exported(fork, full, patch)
         mark = f"exported -> {state.split(' ', 1)[1] or state[:12]}" if state else "not exported"
         print(f"  {line}    [{mark}]")
     return 0
+
+
+def write_pr_draft(branch: str, subject: str, body: str, touched: list[str], head: str) -> Path:
+    """Seed the upstream PR template from the lab commit's rationale (kept out of the commit)."""
+    out_dir = LAB_ROOT / "private" / "pr-drafts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{branch.replace('/', '__')}.md"
+    files = "\n".join(f"- `{t}`" for t in touched)
+    problem = body.splitlines()[0] if body else "TBD"
+    text = f"""# {subject}
+
+<!-- branch {branch}, head {head}. Paste into the upstream PR template; fill TBD cells from the
+writeback verification output and the fork's own checks. Scrub before posting. -->
+
+## Summary
+
+- Problem: {problem}
+- Change: TBD
+- User-visible effect: TBD
+- Linked issue: Closes #TBD
+
+### Rationale (from the lab commit)
+
+{body or "TBD"}
+
+### Files
+
+{files}
+
+## Risk and trust assessment
+
+- Risk surfaces touched: TBD
+- Untrusted inputs or external dependencies: none
+- Remote code, deserialization, credentials, subprocess, network, or filesystem impact: none
+- Compatibility or migration impact: none
+
+## Test evidence
+
+Exact head SHA: `{head}`
+
+| Check | Result | Evidence or notes |
+|---|---|---|
+| Focused regression/contract tests | TBD | |
+| Negative and boundary tests | TBD | |
+| `python -m ruff check --select F app.py obliteratus tests scripts` | TBD | |
+| `uv lock --check` | TBD | |
+| Selected PR core/risk tests | TBD | |
+| Package build, when package inputs changed | not applicable | |
+| Import and CLI smoke checks | TBD | |
+| Applicable risk-surface checks | not applicable | |
+| Conditional hardware/service gates | not applicable | |
+
+Coverage or mutation impact:
+
+- Changed-line: TBD
+
+## Research or performance evidence
+
+Not applicable.
+"""
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return path
 
 
 def verify(fork: Path, touched: list[str]) -> bool:
@@ -162,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fork", type=Path, help="fork checkout (default: manifest [fork].path)")
     ap.add_argument("--list", action="store_true", help="list shadow..fixes and export state")
     ap.add_argument("--no-verify", action="store_true", help="skip ruff/pytest in the fork")
+    ap.add_argument("--draft-only", action="store_true",
+                    help="only (re)write the PR description draft for an already-exported branch")
     args = ap.parse_args(argv)
 
     manifest = load_manifest()
@@ -176,8 +251,14 @@ def main(argv: list[str] | None = None) -> int:
     commit = git(["rev-parse", "--verify", f"{args.commit}^{{commit}}"], lab).strip()
     if not git(["branch", "--contains", commit, "fixes"], lab).strip():
         die(f"{commit[:12]} is not on the lab fixes branch")
-    patch, subject, touched = export_patch(lab, commit, ren)
+    patch, subject, body, touched = export_patch(lab, commit, ren)
     prior = already_exported(fork, commit, patch, args.base)
+    if args.draft_only:
+        if not git(["rev-parse", "-q", "--verify", f"refs/heads/{args.branch}"], fork, check=False).strip():
+            die(f"fork branch {args.branch!r} does not exist; export first")
+        head = git(["rev-parse", "--short", args.branch], fork).strip()
+        print(f"PR description draft: {write_pr_draft(args.branch, subject, body, touched, head)}")
+        return 0
     if prior:
         die(f"{commit[:12]} was already exported: {prior}")
     if git(["status", "--porcelain", "--untracked-files=no"], fork).strip():
@@ -206,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     head = git(["log", "-1", "--format=%h %G? %GS"], fork).strip()
     print(f"fork {args.branch}: {head}")
+    draft = write_pr_draft(args.branch, subject, body, touched, head.split(" ")[0])
+    print(f"PR description draft: {draft}")
     ok = True if args.no_verify else verify(fork, touched)
     git(["checkout", "-q", original], fork)
     print(f"fork back on {original}; branch {args.branch} ready" if ok else f"verification FAILED on {args.branch}")
