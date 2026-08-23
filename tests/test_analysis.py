@@ -278,6 +278,31 @@ class TestWhitenedSVD:
         comparison = WhitenedSVDExtractor.compare_with_standard(result, torch.stack([e[0], e[1]]).to(dtype))
         assert comparison["subspace_principal_cosines"] == pytest.approx([1.0, 0.0], abs=1e-3)
 
+    @pytest.mark.parametrize(
+        "whitened_device, standard_device",
+        [("cpu", "cpu")]
+        + ([("cuda", "cpu"), ("cpu", "cuda"), ("cuda", "cuda")] if torch.cuda.is_available() else []),
+    )
+    def test_compare_with_standard_is_device_agnostic(self, whitened_device, standard_device):
+        """All cosines are computed on CPU copies, so inputs may live on different
+        devices and in any float dtype; the inputs are not moved or modified."""
+        e = torch.eye(6)
+        theta = torch.tensor(25.0).deg2rad()
+        skewed = torch.stack([e[0], torch.cos(theta) * e[0] + torch.sin(theta) * e[1]])
+        whitened = skewed.to(device=whitened_device, dtype=torch.float16)
+        standard = torch.stack([e[0], e[1]]).to(device=standard_device, dtype=torch.bfloat16)
+        result = self._result_with_directions(whitened)
+
+        comparison = WhitenedSVDExtractor.compare_with_standard(result, standard)
+
+        assert comparison["primary_direction_cosine"] == pytest.approx(1.0, abs=1e-3)
+        # Row 0 matches e0 exactly; row 1's best match is e0 at cos(25 degrees).
+        assert comparison["avg_max_direction_cosine"] == pytest.approx(((1 + torch.cos(theta)) / 2).item(), abs=2e-3)
+        assert comparison["subspace_principal_cosines"] == pytest.approx([1.0, 1.0], abs=1e-3)
+        assert result.directions.device.type == whitened_device
+        assert result.directions.dtype == torch.float16
+        assert standard.device.type == standard_device
+
     def test_handles_3d_activations(self):
         """Should handle activations with an extra batch dimension."""
         torch.manual_seed(42)

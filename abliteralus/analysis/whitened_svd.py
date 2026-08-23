@@ -304,9 +304,15 @@ class WhitenedSVDExtractor:
         if standard_direction.dim() == 1:
             standard_direction = standard_direction.unsqueeze(0)
 
+        # This is a diagnostic over a handful of direction vectors. Work on CPU
+        # float64 copies so the result does not depend on where the two inputs
+        # live (they may differ, and MPS has no float64) or on their dtype; the
+        # inputs themselves are left untouched.
+        wht_dirs = whitened_result.directions.detach().to(device="cpu", dtype=torch.float64)
+        std_dirs = standard_direction.detach().to(device="cpu", dtype=torch.float64)
+
         # Ensure unit vectors
-        std_norm = standard_direction / standard_direction.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-        wht_dirs = whitened_result.directions
+        std_norm = std_dirs / std_dirs.norm(dim=-1, keepdim=True).clamp(min=1e-8)
 
         # Primary direction alignment
         primary_cos = (wht_dirs[0] @ std_norm[0]).abs().item()
