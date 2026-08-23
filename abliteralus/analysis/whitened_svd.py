@@ -32,10 +32,28 @@ from dataclasses import dataclass
 import torch
 
 from abliteralus.analysis.numerical_contracts import (
-    orthogonalize_subspace_rows,
     validate_whitened_parameters,
     validate_whitened_request,
 )
+
+
+def _orthonormal_row_basis(rows: torch.Tensor, rel_tol: float = 1e-6) -> torch.Tensor:
+    """Rank-revealing orthonormal basis (as rows) of ``span(rows)``.
+
+    Uses the SVD and keeps right singular vectors whose singular value exceeds
+    ``rel_tol`` times the largest, so dependent or duplicate rows do not add a
+    fictitious dimension. Returns a ``(rank, d)`` float64 tensor; rank may be 0.
+    """
+    work = rows.detach().to(dtype=torch.float64)
+    if work.dim() == 1:
+        work = work.unsqueeze(0)
+    if work.numel() == 0 or not torch.isfinite(work).all():
+        return work[:0]
+    _, singular_values, vh = torch.linalg.svd(work, full_matrices=False)
+    if singular_values.numel() == 0 or singular_values[0] <= 0:
+        return work[:0]
+    keep = singular_values > rel_tol * singular_values[0]
+    return vh[keep]
 
 
 @dataclass
@@ -273,11 +291,12 @@ class WhitenedSVDExtractor:
 
         ``subspace_principal_cosine`` is the cosine of the smallest principal
         angle between the two spans and ``subspace_principal_cosines`` lists
-        all of them in descending order. Whitened directions are unit-norm
+        all ``min(rank, rank)`` of them in descending order, for any pair of
+        ranks including single directions. Whitened directions are unit-norm
         but not mutually orthogonal (they are orthogonal under the inverse
-        harmless covariance), so both bases are orthonormalized before the
-        angles are taken; otherwise the singular values are not cosines and
-        can exceed one.
+        harmless covariance), so each span is first reduced to a rank-revealing
+        orthonormal basis; otherwise the singular values are not cosines, can
+        exceed one, and dependent rows would count as extra dimensions.
         """
         if standard_direction.dim() == 1:
             standard_direction = standard_direction.unsqueeze(0)
@@ -290,24 +309,22 @@ class WhitenedSVDExtractor:
         primary_cos = (wht_dirs[0] @ std_norm[0]).abs().item()
 
         # Subspace overlap: average max cosine sim for each whitened dir
-        n_w = wht_dirs.shape[0]
-        n_s = std_norm.shape[0]
-        cos_matrix = (wht_dirs @ std_norm.T).abs()  # (n_w, n_s)
+        cos_matrix = (wht_dirs @ std_norm.T).abs()  # (n_whitened, n_standard)
 
         avg_max_cos = cos_matrix.max(dim=-1).values.mean().item()
 
-        # Principal angles between the two spans. Singular values of Y Z^T are
-        # principal-angle cosines only for orthonormal bases, so orthonormalize
-        # both sides first; the whitened rows are not Euclidean-orthogonal.
-        if n_w > 1 and n_s > 1:
-            q_w = orthogonalize_subspace_rows(wht_dirs)
-            q_s = orthogonalize_subspace_rows(std_norm.to(dtype=q_w.dtype))
-            cosines = torch.linalg.svdvals(q_w @ q_s.T).clamp(0.0, 1.0)
-            principal_cosines = cosines.tolist()
-            principal_cos = principal_cosines[0]
+        # Principal angles between the two spans, for any pair of ranks. Singular
+        # values of Y Z^T are principal-angle cosines only for orthonormal bases,
+        # so take a rank-revealing orthonormal basis of each span first: the
+        # whitened rows are not Euclidean-orthogonal, and a plain QR pads a
+        # rank-deficient input with a fictitious direction.
+        q_w = _orthonormal_row_basis(wht_dirs)
+        q_s = _orthonormal_row_basis(std_norm)
+        if q_w.shape[0] == 0 or q_s.shape[0] == 0:
+            principal_cosines = [0.0]
         else:
-            principal_cos = primary_cos
-            principal_cosines = [primary_cos]
+            principal_cosines = torch.linalg.svdvals(q_w @ q_s.T).clamp(0.0, 1.0).tolist()
+        principal_cos = principal_cosines[0]
 
         return {
             "primary_direction_cosine": primary_cos,

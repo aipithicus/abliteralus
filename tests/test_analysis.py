@@ -216,6 +216,46 @@ class TestWhitenedSVD:
         assert partial["subspace_principal_cosines"] == pytest.approx([1.0, torch.cos(phi).item()], abs=1e-6)
         assert all(0.0 <= c <= 1.0 for c in partial["subspace_principal_cosines"])
 
+    def test_compare_with_standard_principal_angles_for_mixed_ranks(self):
+        """A single direction against a plane is still a principal angle, not the
+        cosine against the plane's first basis vector."""
+        e = torch.eye(5)
+        line = self._result_with_directions(e[1].unsqueeze(0))
+
+        containing_plane = WhitenedSVDExtractor.compare_with_standard(line, torch.stack([e[0], e[1]]))
+        assert containing_plane["subspace_principal_cosines"] == pytest.approx([1.0], abs=1e-6)
+        assert containing_plane["subspace_principal_cosine"] == pytest.approx(1.0, abs=1e-6)
+        # The direction-level metric keeps its own meaning: e1 against the first row e0.
+        assert containing_plane["primary_direction_cosine"] == pytest.approx(0.0, abs=1e-6)
+
+        orthogonal_plane = WhitenedSVDExtractor.compare_with_standard(line, torch.stack([e[2], e[3]]))
+        assert orthogonal_plane["subspace_principal_cosines"] == pytest.approx([0.0], abs=1e-6)
+
+        plane = self._result_with_directions(torch.stack([e[0], e[1]]))
+        single = WhitenedSVDExtractor.compare_with_standard(plane, e[1])
+        assert single["subspace_principal_cosines"] == pytest.approx([1.0], abs=1e-6)
+
+    def test_compare_with_standard_ignores_fictitious_rank(self):
+        """Dependent rows must not contribute a dimension: duplicate e0 spans a
+        line, so its angle to the orthogonal plane span(e1, e2) is 90 degrees."""
+        e = torch.eye(5)
+        duplicated = self._result_with_directions(torch.stack([e[0], e[0]]))
+
+        orthogonal_plane = WhitenedSVDExtractor.compare_with_standard(duplicated, torch.stack([e[1], e[2]]))
+        assert orthogonal_plane["subspace_principal_cosines"] == pytest.approx([0.0], abs=1e-6)
+        assert orthogonal_plane["subspace_principal_cosine"] == pytest.approx(0.0, abs=1e-6)
+
+        containing_plane = WhitenedSVDExtractor.compare_with_standard(duplicated, torch.stack([e[0], e[1]]))
+        assert containing_plane["subspace_principal_cosines"] == pytest.approx([1.0], abs=1e-6)
+
+        # Near-duplicate rows (numerically dependent) collapse the same way.
+        nearly = torch.stack([e[0], e[0] + 1e-9 * e[3]])
+        nearly = nearly / nearly.norm(dim=-1, keepdim=True)
+        near_dup = self._result_with_directions(nearly)
+        assert WhitenedSVDExtractor.compare_with_standard(
+            near_dup, torch.stack([e[1], e[2]])
+        )["subspace_principal_cosines"] == pytest.approx([0.0], abs=1e-6)
+
     def test_handles_3d_activations(self):
         """Should handle activations with an extra batch dimension."""
         torch.manual_seed(42)
