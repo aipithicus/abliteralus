@@ -78,10 +78,10 @@ def test_system_memory_sources_and_fallback(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", reject_psutil)
-    monkeypatch.setattr(device.os, "sysconf", lambda name: {"SC_PHYS_PAGES": 4, "SC_PAGE_SIZE": gib}[name])
+    monkeypatch.setattr(device.os, "sysconf", lambda name: {"SC_PHYS_PAGES": 4, "SC_PAGE_SIZE": gib}[name], raising=False)
     assert device._system_memory_gb() == (4.0, 2.4)
 
-    monkeypatch.setattr(device.os, "sysconf", Mock(side_effect=ValueError))
+    monkeypatch.setattr(device.os, "sysconf", Mock(side_effect=ValueError), raising=False)
     assert device._system_memory_gb() == (16.0, 8.0)
 
 

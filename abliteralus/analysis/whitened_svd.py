@@ -32,6 +32,7 @@ from dataclasses import dataclass
 import torch
 
 from abliteralus.analysis.numerical_contracts import (
+    orthogonalize_subspace_rows,
     validate_whitened_parameters,
     validate_whitened_request,
 )
@@ -263,12 +264,20 @@ class WhitenedSVDExtractor:
     def compare_with_standard(
         whitened_result: WhitenedSVDResult,
         standard_direction: torch.Tensor,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | list[float]]:
         """Compare whitened vs standard SVD directions.
 
         Returns cosine similarities between the whitened and standard
         directions, revealing how much the whitening transformation
         rotates the extracted refusal subspace.
+
+        ``subspace_principal_cosine`` is the cosine of the smallest principal
+        angle between the two spans and ``subspace_principal_cosines`` lists
+        all of them in descending order. Whitened directions are unit-norm
+        but not mutually orthogonal (they are orthogonal under the inverse
+        harmless covariance), so both bases are orthonormalized before the
+        angles are taken; otherwise the singular values are not cosines and
+        can exceed one.
         """
         if standard_direction.dim() == 1:
             standard_direction = standard_direction.unsqueeze(0)
@@ -287,17 +296,24 @@ class WhitenedSVDExtractor:
 
         avg_max_cos = cos_matrix.max(dim=-1).values.mean().item()
 
-        # Subspace principal angle (smallest angle between subspaces)
+        # Principal angles between the two spans. Singular values of Y Z^T are
+        # principal-angle cosines only for orthonormal bases, so orthonormalize
+        # both sides first; the whitened rows are not Euclidean-orthogonal.
         if n_w > 1 and n_s > 1:
-            _, S_overlap, _ = torch.linalg.svd(wht_dirs @ std_norm.T)
-            principal_cos = S_overlap[0].clamp(max=1.0).item()
+            q_w = orthogonalize_subspace_rows(wht_dirs)
+            q_s = orthogonalize_subspace_rows(std_norm.to(dtype=q_w.dtype))
+            cosines = torch.linalg.svdvals(q_w @ q_s.T).clamp(0.0, 1.0)
+            principal_cosines = cosines.tolist()
+            principal_cos = principal_cosines[0]
         else:
             principal_cos = primary_cos
+            principal_cosines = [primary_cos]
 
         return {
             "primary_direction_cosine": primary_cos,
             "avg_max_direction_cosine": avg_max_cos,
             "subspace_principal_cosine": principal_cos,
+            "subspace_principal_cosines": principal_cosines,
             "whitened_condition_number": whitened_result.condition_number,
             "whitened_effective_rank": whitened_result.effective_rank,
         }
