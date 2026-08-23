@@ -56,9 +56,10 @@ PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8 \
 uv run pytest -q                    # the vendored core tests are the extraction's acceptance test
 ```
 
-`PYTORCH_CUDA_ALLOC_CONF` must be pre-set on a Windows CUDA box: upstream `device.py` otherwise
-sets `expandable_segments:True`, torch warns it is unsupported on Windows, and upstream's
-`filterwarnings = ["error"]` turns that into a test failure (upstream bug; their CI has no CUDA).
+`PYTORCH_CUDA_ALLOC_CONF` is no longer required: `main` carries a local fix to `device.py`
+(skip `expandable_segments` on win32) identical to the fork branch `fix/cuda-alloc-windows`
+proposed upstream. When upstream merges it, the shadow merge is a no-op for that hunk; if upstream
+fixes it differently, the merge conflicts and upstream's version wins.
 
 Baseline on this machine (fork b0da692, transform as of 2026-08-22): **1173 passed, 10 failed,
 1 skipped, 77 % coverage**. The 10 are Windows-only and not extraction artifacts — seven symlink
