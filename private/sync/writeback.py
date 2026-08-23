@@ -326,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-verify", action="store_true", help="skip ruff/pytest in the fork")
     ap.add_argument("--draft-only", action="store_true",
                     help="only (re)write the PR description draft for an already-exported branch")
+    ap.add_argument("--lab-branch", default="fixes",
+                    help="lab branch the commit must belong to (default: fixes; use a feat/* branch for contributions)")
     ap.add_argument("--onto", action="store_true",
                     help="append to an existing (unpushed) fork branch instead of creating one")
     ap.add_argument("--squash", action="store_true",
@@ -346,8 +348,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("a lab commit and --branch are required (or use --list / --squash)")
 
     commit = git(["rev-parse", "--verify", f"{args.commit}^{{commit}}"], lab).strip()
-    if not git(["branch", "--contains", commit, "fixes"], lab).strip():
-        die(f"{commit[:12]} is not on the lab fixes branch")
+    if not git(["branch", "--contains", commit, args.lab_branch], lab).strip():
+        die(f"{commit[:12]} is not on the lab branch {args.lab_branch!r}")
     patch, subject, body, touched = export_patch(lab, commit, ren)
     prior = already_exported(fork, commit, patch, args.base)
     if args.draft_only:

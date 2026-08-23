@@ -69,6 +69,7 @@ python private/sync/writeback.py --list               # pending series and which
 python private/sync/writeback.py <lab-commit> --branch fix/<name>   # re-author one fixes commit as a fork branch
 python private/sync/writeback.py <lab-commit> --branch fix/<name> --onto   # append a follow-up to that branch
 python private/sync/writeback.py --squash --branch fix/<name>    # unpushed branch -> one commit; lab mapping recorded
+python private/sync/writeback.py <lab-commit> --branch feat/<name> --lab-branch feat/<name>   # contributions from a lab feature branch
 ```
 
 The fork needs an `upstream` remote for `--sync-fork`:
