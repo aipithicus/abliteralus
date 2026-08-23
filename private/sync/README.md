@@ -7,9 +7,33 @@ whole-token); write-back reverses it.
 
 ## Branches
 
+```
+shadow ──► fixes ──► main
+```
+
 - `shadow` — machine-written by `shadow_sync.py`, never edited by hand. One commit per sync,
-  built from a fork **commit** (not its working tree), trailer `Fork-Commit: <sha>`.
-- `main` — your work. Created from the first shadow commit. Sync = `git merge shadow`.
+  built from a fork **commit** (not its working tree), trailers `Fork-Commit:` and `Transform:`.
+- `fixes` — one commit per bug fix you intend to send upstream (ledger entries). Nothing else.
+  `git diff shadow fixes` is therefore exactly the pending-upstream patch series, and
+  `git format-patch shadow..fixes` exports it one patch per ledger entry.
+- `main` — research work and lab-only adaptations (things you will *not* upstream).
+
+Sync with `--merge` = `shadow → fixes` (temporary worktree; conflicts stop with the worktree kept
+for resolution), then `fixes → main`. A fix that upstream has absorbed drops out of
+`diff shadow fixes` on that sync and is reported as **absorbed** — close its ledger entry.
+A local fix is never blocked on upstream: it rides on `fixes` across every sync; if upstream later
+fixes the same lines differently, that hunk conflicts once (take upstream's), and `rerere` replays
+the resolution afterwards.
+
+Adding a fix (never commit fixes on `main`):
+
+```
+git worktree add ../fixes-wt fixes        # or: git switch fixes, if main is clean
+...edit, test...
+git -C ../fixes-wt commit -am "fix(area): one-line summary   [ledger YYYY-MM-DD]"
+git worktree remove ../fixes-wt
+git merge fixes                           # on main
+```
 
 `git diff shadow~1 shadow` is the upstream changelog for the core, already renamed.
 
@@ -20,7 +44,7 @@ python private/sync/shadow_sync.py --self-test        # rename involution + seam
 python private/sync/shadow_sync.py --dry-run          # full report; no writes
 python private/sync/shadow_sync.py                    # commit a new shadow; report; no merge
 python private/sync/shadow_sync.py --sync-fork        # first fast-forward the fork's main from `upstream` (ff-only)
-python private/sync/shadow_sync.py --merge            # ...then merge shadow into main
+python private/sync/shadow_sync.py --merge            # ...then shadow -> fixes -> main
 python private/sync/airgap_check.py                   # sockets blocked: import every module, poke sentinels
 ```
 
@@ -55,10 +79,9 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
 uv run pytest -q                    # the vendored core tests are the extraction's acceptance test
 ```
 
-No `PYTORCH_CUDA_ALLOC_CONF` workaround is needed: `main` carries a local fix to `device.py`
-(skip `expandable_segments` on win32) identical to the fork branch `fix/cuda-alloc-windows`
-proposed upstream. When upstream merges it, the shadow merge is a no-op for that hunk; if upstream
-fixes it differently, the merge conflicts and upstream's version wins.
+No `PYTORCH_CUDA_ALLOC_CONF` workaround is needed: the `fixes` branch carries the win32
+`expandable_segments` fix (identical to the fork branch `fix/cuda-alloc-windows`), merged into
+`main`. When upstream absorbs it, the next sync reports it as absorbed.
 
 Baseline on this machine (fork b0da692, transform as of 2026-08-22): **1173 passed, 10 failed,
 1 skipped, 77 % coverage**. The 10 are Windows-only and not extraction artifacts — seven symlink
