@@ -72,7 +72,19 @@ def validate_whitened_request(
 
 
 def orthogonalize_subspace_rows(subspace: torch.Tensor) -> torch.Tensor:
-    """Orthogonalize rows of a subspace matrix with QR while preserving dtype/device."""
+    """Orthonormalize the rows of a subspace matrix in order, preserving shape, dtype, and device.
+
+    Modified Gram-Schmidt with dependency detection: row ``i`` is orthogonalized
+    against the accepted rows before it and normalized. A row whose residual is
+    below ``rel_tol`` of its own norm is linearly dependent on earlier rows and is
+    returned as a **zero row** rather than an arbitrary orthonormal direction. The
+    row count never changes, so callers keep indexing by row, and a zero row is a
+    no-op for :func:`project_weight_against_direction`. Row 0 keeps its orientation.
+
+    A plain QR factorization cannot provide this: for a rank-deficient input it
+    pads the basis with a direction orthogonal to the span, which a weight
+    projection would then remove from the model.
+    """
     if subspace.shape[0] <= 1 or subspace.numel() == 0:
         return subspace
     if not torch.isfinite(subspace).all():
@@ -82,10 +94,23 @@ def orthogonalize_subspace_rows(subspace: torch.Tensor) -> torch.Tensor:
     if work.norm() < 1e-8:
         return torch.zeros_like(subspace)
 
-    q, _ = torch.linalg.qr(work.T)
-    result = q[:, : subspace.shape[0]].T
-    if (result[0] @ work[0]) < 0:
-        result[0] = -result[0]
+    rel_tol = 1e-6 if compute_dtype == torch.float64 else 1e-4
+    result = torch.zeros_like(work)
+    accepted: list[int] = []
+    for idx in range(work.shape[0]):
+        row = work[idx]
+        original_norm = row.norm()
+        if original_norm <= 0:
+            continue
+        residual = row.clone()
+        for _ in range(2):  # a second pass restores orthogonality for nearly collinear rows
+            for prev in accepted:
+                residual = residual - (residual @ result[prev]) * result[prev]
+        residual_norm = residual.norm()
+        if residual_norm <= rel_tol * original_norm:
+            continue  # dependent on earlier rows: stays zero
+        result[idx] = residual / residual_norm
+        accepted.append(idx)
     return result.to(dtype=subspace.dtype, device=subspace.device)
 
 
