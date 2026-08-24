@@ -466,6 +466,11 @@ def test_smoke_reevaluation_reuses_verified_gguf_models(tmp_path, monkeypatch):
         "_llama_completion",
         lambda model, prompt, **_kwargs: {"model": model.stem, "prompt": prompt},
     )
+    monkeypatch.setattr(
+        bench,
+        "_git_value",
+        lambda arguments: "fixture-commit" if arguments == ["rev-parse", "HEAD"] else "",
+    )
 
     assert bench.reevaluate_gguf_experiment(spec, run_dir=run_dir) == run_dir.resolve()
     updated = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -475,4 +480,8 @@ def test_smoke_reevaluation_reuses_verified_gguf_models(tmp_path, monkeypatch):
         "second",
     ]
     assert stage["smoke_history"][0]["evaluations"] == {"baseline": [{"old": True}]}
+    assert stage["smoke_runtime"]["git"] == {
+        "commit": "fixture-commit",
+        "status": "",
+    }
     assert (gguf_dir / "smoke-results.json").is_file()

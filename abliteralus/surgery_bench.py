@@ -1170,6 +1170,12 @@ def reevaluate_gguf_experiment(
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "llama_cli": report["gguf"]["llama_cli"],
+                "git": {
+                    "commit": _git_value(["rev-parse", "HEAD"]),
+                    "status": _git_value(["status", "--short"]),
+                },
+                "python": sys.version,
+                "platform": platform.platform(),
             },
         }
     )

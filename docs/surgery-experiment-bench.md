@@ -97,7 +97,8 @@ uv run --frozen --extra gguf abliteralus-surgery smoke \
 ```
 
 This command verifies both GGUF hashes against the run manifest before loading
-them and preserves the prior evaluations under `smoke_history`.
+them, preserves the prior evaluations under `smoke_history`, and records the
+exact Git checkout and llama.cpp probe under `smoke_runtime`.
 
 ## Lightning AI scale lane
 
