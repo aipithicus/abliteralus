@@ -1,0 +1,34 @@
+schema_version: 1
+name: qwen25-7b-lightning
+
+model:
+  source: Qwen/Qwen2.5-7B-Instruct
+  revision: a09a35458c702b33eeacc393d103063234e8bc28
+  device: cuda
+  dtype: float16
+  trust_remote_code: false
+  local_files_only: false
+
+pipeline:
+  method: advanced
+  n_directions: 4
+  direction_method: svd
+  norm_preserve: true
+  regularization: 0.05
+  max_seq_length: 256
+  verify_sample_size: 16
+  refusal_max_tokens: 64
+
+prompts:
+  harmful: 64
+  harmless: 64
+  jailbreak: 0
+
+output:
+  root: outputs/surgery
+
+# The first Lightning lane deliberately stops at a portable HF checkpoint.
+# Enable GGUF only after provisioning a pinned llama.cpp toolchain in the
+# Studio; the local mini profile exercises the complete conversion/A-B lane.
+gguf:
+  enabled: false

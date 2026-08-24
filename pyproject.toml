@@ -39,6 +39,10 @@ dependencies = [
 "Repository" = "https://github.com/elder-plinius/ABLITERALUS"
 "Bug Tracker" = "https://github.com/elder-plinius/ABLITERALUS/issues"
 
+[project.scripts]
+abliteralus-surgery = "abliteralus.surgery_bench:main"
+abliteralus-lightning = "abliteralus.lightning_surgery:main"
+
 [project.optional-dependencies]
 dev = [
     "build==1.2.2.post1",
@@ -50,6 +54,11 @@ dev = [
 ]
 quantization = ["bitsandbytes>=0.46.1"]
 spaces = ["gradio>=6.7,<7.0"]
+lightning = ["lightning-sdk==2026.8.18; python_version >= '3.11'"]
+gguf = [
+    "protobuf==4.25.8",
+    "sentencepiece==0.2.1",
+]
 
 [dependency-groups]
 ci = [
@@ -233,7 +242,7 @@ constraint-dependencies = [
     "typer==0.27.1",
     "typing-extensions==4.16.0",
     "tzdata==2026.3",
-    "urllib3==2.7.0",
+    "urllib3==2.5.0",
     "xxhash==3.8.1",
     "yarl==1.24.5",
 ]
