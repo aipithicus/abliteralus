@@ -1,5 +1,13 @@
 # feat(analysis): add Grassmann subspace geometry
 
+> **SUPERSEDED — do not submit.** This described the monolithic `feat/grassmann`
+> branch, now archived at `a0877ae`. The work was carved into three pristine PR
+> branches, each with its own draft:
+> [feat__grassmann-metrics.md](feat__grassmann-metrics.md),
+> [feat__grassmann-cross-layer.md](feat__grassmann-cross-layer.md), and
+> [feat__grassmann-statistics.md](feat__grassmann-statistics.md) (deferred).
+> Kept for provenance only.
+
 <!-- branch feat/grassmann, head 015f02c. Paste into the upstream PR template; fill TBD cells from the
 writeback verification output and the fork's own checks. Scrub before posting. -->
 
