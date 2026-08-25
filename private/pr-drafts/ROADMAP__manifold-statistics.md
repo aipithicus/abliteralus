@@ -77,7 +77,7 @@ inference last.
 | R5 | `feat/grassmann-median` | R4 | R4 | Geometric median on `Gr(k,d)`; robust consensus where a cluster holds an anomalous layer |
 | R6 | `feat/manifold-protocol` | R5 | R5 | Extract a manifold protocol (`log`/`exp`/`dist`) so estimators stop being Grassmann-specific |
 | R7 | `feat/product-manifold` | R6 | R6 | `R^p × Gr(k,d)` with scaled metric `H_α`; the MoMPCA structure |
-| R8 | `feat/subspace-uncertainty` | R7 | R4 (bootstrap) / R7 (sandwich) | Confidence region for the consensus subspace |
+| R8 | `feat/subspace-uncertainty` | R7 | R4 (bootstrap) / R7 (sandwich) | Stability ordering for consensus subspaces first; calibrated confidence region only behind a coverage check |
 
 **R1 and R2 are independent of the entire Grassmann stack.** They can be submitted
 alongside the metrics PR rather than queued behind it, which is what makes this
@@ -88,12 +88,29 @@ until it exists, that PR stays deferred as its draft says.
 
 ## Caveats that decide whether the later PRs are real
 
-- **Layers are not i.i.d.** You's asymptotics assume independent nodes. Transformer
-  layers are a dependent sequence, so the sandwich covariance has no clean
-  interpretation on the layer axis. Robust consensus across layers is descriptive
-  and fine; *inference* across layers is not. R8 should therefore bootstrap over
-  prompts or data splits — genuine replicates — and treat the sandwich form as a
-  product-manifold refinement, not the headline.
+- **The binding constraint is effective sample size, not the i.i.d. label.**
+  Dependence alone is not disqualifying, and the sandwich is a poor target for that
+  objection: `A⁻¹SA⁻ᵀ` exists precisely *because* models are misspecified. The
+  standard repair is mechanical — replace the meat matrix `S = Var(U_i)` with a HAC
+  (Newey–West) or cluster-robust form summing score autocovariances across layer
+  lags. The layer sequence is smooth and locally correlated, which is the friendliest
+  case for that repair, and the clusters this codebase already computes are natural
+  dependence blocks.
+  What actually bites is small `n`: HAC autocovariance estimates are themselves noisy,
+  and with ~32–80 layers under strong adjacent correlation the *effective* `n` may be
+  an order of magnitude below the nominal count. That is a measurable quantity, not an
+  assumption to argue about — and ABLITERALUS already computes its inputs, since
+  `mean_adjacent_cosine` and `direction_persistence_score` on `CrossLayerResult` are
+  exactly what an effective-sample-size estimate consumes. Compute it, and let the
+  number gate the claim.
+
+- **Separate relative use from absolute use.** Ranking layers or clusters by stability
+  survives a miscalibrated variance; quoting a 95% region does not. Under positively
+  correlated scores a naive `S` underestimates variance, so intervals come out too
+  narrow — anti-conservative, not meaningless. That failure mode is checkable:
+  bootstrapping over prompts gives a large-`n` reference interval to calibrate the
+  layer-axis one against. R8 should ship the relative ordering first and quote
+  coverage only once such a check exists.
 
 - **The scatter is not high-breakdown, and ThermoMapper's own comment says otherwise.**
   `WeiszfeldScatter.cs:5` states the weighting is "consistent with the median's
