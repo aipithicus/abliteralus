@@ -1,0 +1,25 @@
+schema_version = 1
+repository = "../.."
+python = "../../.venv/Scripts/python.exe"
+secret_config = "../secret_manager/secrets.local.toml"
+
+[profiles]
+local_surgery = "local-surgery"
+local_inference = "local-inference"
+lightning_control = "lightning-control"
+lightning_surgery = "lightning-surgery"
+lightning_inference = "lightning-inference"
+
+[lightning]
+teamspace = "OWNER/TEAMSPACE"
+studio = "abliteralus-lab"
+control_machine = "CPU-4"
+surgery_machine = "L40S"
+inference_machine = "L40S"
+forward_environment = ["HF_TOKEN"]
+
+[ssh]
+executable = "ssh"
+destination = ""
+port = 22
+identity_file = ""

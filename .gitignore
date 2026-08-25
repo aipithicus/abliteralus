@@ -11,6 +11,8 @@ build/
 .venv-jetson/
 venv/
 env/
+deps/**
+**/.scratch
 .env
 .env.*
 *.pt
@@ -30,6 +32,7 @@ results/
 # Secrets & credentials
 credentials*
 secrets*
+/private/lab_bench/lab.local.toml
 *.pem
 *.key
 *.p12

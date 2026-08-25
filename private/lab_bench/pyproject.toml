@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "abliteralus-lab-bench"
+version = "0.1.0"
+description = "Local and Lightning control plane for ABLITERALUS experiments"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "Aipithicus Enterprises" }]
+dependencies = [
+  "aipithicus-secret-manager",
+  "lightning-sdk==2026.8.18",
+]
+
+[project.scripts]
+lab-bench = "lab_bench.cli:main"
+
+[tool.uv.sources]
+aipithicus-secret-manager = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
