@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import tomllib
@@ -37,6 +38,14 @@ class LightningDefaults:
     inference_machine: str
     remote_root: str
     forward_environment: tuple[str, ...]
+    allocation_timeout_seconds: float
+    allocation_retry_seconds: float
+    pending_policy: str
+    surgery_fallback_machines: tuple[str, ...]
+    inference_fallback_machines: tuple[str, ...]
+    control_max_runtime_seconds: int | None
+    surgery_max_runtime_seconds: int | None
+    inference_max_runtime_seconds: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +156,14 @@ def _parse_lightning(table: Mapping[str, Any]) -> LightningDefaults:
         "inference_machine",
         "remote_root",
         "forward_environment",
+        "allocation_timeout_seconds",
+        "allocation_retry_seconds",
+        "pending_policy",
+        "surgery_fallback_machines",
+        "inference_fallback_machines",
+        "control_max_runtime_seconds",
+        "surgery_max_runtime_seconds",
+        "inference_max_runtime_seconds",
     }
     _unknown(table, keys, "lightning")
     teamspace = _string(table, "teamspace", "lightning")
@@ -178,6 +195,27 @@ def _parse_lightning(table: Mapping[str, Any]) -> LightningDefaults:
         raise LabBenchError(
             "lightning.forward_environment entries must use uppercase environment syntax"
         )
+    allocation_timeout = _positive_number(
+        table.get("allocation_timeout_seconds", 900.0),
+        "lightning.allocation_timeout_seconds",
+    )
+    allocation_retry = _positive_number(
+        table.get("allocation_retry_seconds", 30.0),
+        "lightning.allocation_retry_seconds",
+    )
+    pending_policy = table.get("pending_policy", "fail")
+    if pending_policy not in {"fail", "adopt", "stop"}:
+        raise LabBenchError("lightning.pending_policy must be fail, adopt, or stop")
+    surgery_fallback = _machine_list(table, "surgery_fallback_machines")
+    inference_fallback = _machine_list(table, "inference_fallback_machines")
+    max_runtimes = {
+        key: _optional_positive_integer(table, key)
+        for key in (
+            "control_max_runtime_seconds",
+            "surgery_max_runtime_seconds",
+            "inference_max_runtime_seconds",
+        )
+    }
     return LightningDefaults(
         teamspace=teamspace,
         studio=studio,
@@ -186,6 +224,14 @@ def _parse_lightning(table: Mapping[str, Any]) -> LightningDefaults:
         inference_machine=machines["inference_machine"],
         remote_root=str(remote_path),
         forward_environment=tuple(forward),
+        allocation_timeout_seconds=allocation_timeout,
+        allocation_retry_seconds=allocation_retry,
+        pending_policy=pending_policy,
+        surgery_fallback_machines=surgery_fallback,
+        inference_fallback_machines=inference_fallback,
+        control_max_runtime_seconds=max_runtimes["control_max_runtime_seconds"],
+        surgery_max_runtime_seconds=max_runtimes["surgery_max_runtime_seconds"],
+        inference_max_runtime_seconds=max_runtimes["inference_max_runtime_seconds"],
     )
 
 
@@ -210,6 +256,36 @@ def _parse_ssh(table: Mapping[str, Any], base: Path) -> SshDefaults:
 def _resolved_path(value: str, base: Path) -> Path:
     path = Path(value).expanduser()
     return (base / path).resolve() if not path.is_absolute() else path.resolve()
+
+
+def _positive_number(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise LabBenchError(f"{label} must be a positive number")
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise LabBenchError(f"{label} must be a positive finite number")
+    return parsed
+
+
+def _machine_list(table: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    raw = table.get(key, [])
+    if not isinstance(raw, list) or not all(isinstance(value, str) for value in raw):
+        raise LabBenchError(f"lightning.{key} must be an array of machine names")
+    normalized = tuple(value.strip().upper() for value in raw)
+    if any(not value or _MACHINE.fullmatch(value) is None for value in normalized):
+        raise LabBenchError(f"lightning.{key} contains an invalid machine name")
+    if len(set(normalized)) != len(normalized):
+        raise LabBenchError(f"lightning.{key} must not contain duplicates")
+    return normalized
+
+
+def _optional_positive_integer(table: Mapping[str, Any], key: str) -> int | None:
+    if key not in table:
+        return None
+    value = table[key]
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise LabBenchError(f"lightning.{key} must be a positive integer")
+    return value
 
 
 def _string(table: Mapping[str, Any], key: str, context: str) -> str:

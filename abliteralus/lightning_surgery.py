@@ -11,17 +11,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from abliteralus.surgery_bench import SurgeryExperimentSpec, load_experiment_spec
 
@@ -29,6 +31,11 @@ from abliteralus.surgery_bench import SurgeryExperimentSpec, load_experiment_spe
 UV_VERSION = "0.12.4"
 RUNTIME_SCHEMA_VERSION = 1
 DEFAULT_REMOTE_ROOT = ".abliteralus"
+DEFAULT_ALLOCATION_TIMEOUT_SECONDS = 900.0
+DEFAULT_ALLOCATION_RETRY_SECONDS = 30.0
+_START_OUT_OF_CAPACITY = 75
+_START_NOT_SUPPORTED = 69
+_START_STATE_CHANGED = 70
 _BASE_RUNTIME_IMPORTS = (
     "torch",
     "transformers",
@@ -56,6 +63,10 @@ _RUNTIME_FILES = {"pyproject.toml", "uv.lock", "README.md"}
 
 class LightningConfigError(ValueError):
     """Raised before any paid Lightning resource is started."""
+
+
+class LightningAllocationError(RuntimeError):
+    """Raised when a bounded Studio allocation cannot reach Running."""
 
 
 def _require_identifier(value: str, label: str) -> str:
@@ -359,6 +370,87 @@ def _runtime_probe_shell(runtime: LightningRuntime, *, write_marker: bool = Fals
 
 
 @dataclass(frozen=True)
+class LightningAllocationPolicy:
+    timeout_seconds: float = DEFAULT_ALLOCATION_TIMEOUT_SECONDS
+    retry_seconds: float = DEFAULT_ALLOCATION_RETRY_SECONDS
+    fallback_machines: tuple[str, ...] = ()
+    pending_policy: str = "fail"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timeout_seconds": self.timeout_seconds,
+            "retry_seconds": self.retry_seconds,
+            "fallback_machines": list(self.fallback_machines),
+            "pending_policy": self.pending_policy,
+        }
+
+
+@dataclass(frozen=True)
+class LightningAllocationResult:
+    requested_machine: str
+    selected_machine: str
+    mode: str
+    started_at: str
+    completed_at: str
+    duration_seconds: float
+    attempts: tuple[dict[str, Any], ...]
+
+    @property
+    def started_here(self) -> bool:
+        return self.mode in {"started", "started_after_pending_stop"}
+
+    @property
+    def owns_compute(self) -> bool:
+        return self.mode != "reused_running"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requested_machine": self.requested_machine,
+            "selected_machine": self.selected_machine,
+            "mode": self.mode,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "duration_seconds": self.duration_seconds,
+            "attempts": list(self.attempts),
+        }
+
+
+def _normalize_machine(value: str, label: str = "machine") -> str:
+    if _MACHINE.fullmatch(value) is None:
+        raise LightningConfigError(f"{label} contains unsupported characters")
+    return value.upper()
+
+
+def _allocation_policy(
+    *,
+    primary_machine: str,
+    allocation_timeout_seconds: float,
+    allocation_retry_seconds: float,
+    fallback_machines: Sequence[str],
+    pending_policy: str,
+) -> LightningAllocationPolicy:
+    if not math.isfinite(allocation_timeout_seconds) or allocation_timeout_seconds <= 0:
+        raise LightningConfigError("allocation_timeout_seconds must be positive")
+    if not math.isfinite(allocation_retry_seconds) or allocation_retry_seconds <= 0:
+        raise LightningConfigError("allocation_retry_seconds must be positive")
+    if pending_policy not in {"fail", "adopt", "stop"}:
+        raise LightningConfigError("pending_policy must be fail, adopt, or stop")
+    seen = {_normalize_machine(primary_machine)}
+    normalized: list[str] = []
+    for machine in fallback_machines:
+        candidate = _normalize_machine(machine, "fallback machine")
+        if candidate not in seen:
+            seen.add(candidate)
+            normalized.append(candidate)
+    return LightningAllocationPolicy(
+        timeout_seconds=float(allocation_timeout_seconds),
+        retry_seconds=float(allocation_retry_seconds),
+        fallback_machines=tuple(normalized),
+        pending_policy=pending_policy,
+    )
+
+
+@dataclass(frozen=True)
 class LightningProvisionPlan:
     experiment: str
     teamspace: str
@@ -371,6 +463,7 @@ class LightningProvisionPlan:
     remote_source: str
     prepare_command: str
     command: str
+    allocation: LightningAllocationPolicy
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -385,6 +478,7 @@ class LightningProvisionPlan:
             "remote_source": self.remote_source,
             "prepare_command": self.prepare_command,
             "command": self.command,
+            "allocation": self.allocation.to_dict(),
         }
 
 
@@ -399,13 +493,16 @@ def build_provision_plan(
     interruptible: bool = False,
     max_runtime: int | None = None,
     skip_gguf: bool = False,
+    allocation_timeout_seconds: float = DEFAULT_ALLOCATION_TIMEOUT_SECONDS,
+    allocation_retry_seconds: float = DEFAULT_ALLOCATION_RETRY_SECONDS,
+    fallback_machines: Sequence[str] = (),
+    pending_policy: str = "fail",
 ) -> LightningProvisionPlan:
     """Build the explicit, infrequent Studio provisioning operation."""
 
     teamspace = _require_teamspace(teamspace)
     studio = _require_identifier(studio, "studio")
-    if _MACHINE.fullmatch(machine) is None:
-        raise LightningConfigError("machine contains unsupported characters")
+    machine = _normalize_machine(machine)
     if max_runtime is not None and max_runtime <= 0:
         raise LightningConfigError("max_runtime must be positive")
     runtime = build_runtime_layout(
@@ -413,6 +510,13 @@ def build_provision_plan(
         spec,
         remote_root=remote_root,
         skip_gguf=skip_gguf,
+    )
+    allocation = _allocation_policy(
+        primary_machine=machine,
+        allocation_timeout_seconds=allocation_timeout_seconds,
+        allocation_retry_seconds=allocation_retry_seconds,
+        fallback_machines=fallback_machines,
+        pending_policy=pending_policy,
     )
     root = PurePosixPath(runtime.remote_root)
     remote_bundle = str(root / "provision" / "bundles" / f"{runtime.key}.zip")
@@ -461,7 +565,7 @@ def build_provision_plan(
         experiment=spec.name,
         teamspace=teamspace,
         studio=studio,
-        machine=machine.upper(),
+        machine=machine,
         interruptible=interruptible,
         max_runtime=max_runtime,
         runtime=runtime,
@@ -469,6 +573,7 @@ def build_provision_plan(
         remote_source=remote_source,
         prepare_command=prepare_command,
         command="bash -lc " + shlex.quote("; ".join(commands)),
+        allocation=allocation,
     )
 
 
@@ -490,6 +595,7 @@ class LightningRunPlan:
     interruptible: bool
     max_runtime: int | None
     skip_gguf: bool
+    allocation: LightningAllocationPolicy
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -509,6 +615,7 @@ class LightningRunPlan:
             "forwarded_environment": list(self.forwarded_environment),
             "skip_gguf": self.skip_gguf,
             "command": self.command,
+            "allocation": self.allocation.to_dict(),
         }
 
 
@@ -525,6 +632,10 @@ def build_lightning_plan(
     interruptible: bool = False,
     max_runtime: int | None = None,
     skip_gguf: bool = False,
+    allocation_timeout_seconds: float = DEFAULT_ALLOCATION_TIMEOUT_SECONDS,
+    allocation_retry_seconds: float = DEFAULT_ALLOCATION_RETRY_SECONDS,
+    fallback_machines: Sequence[str] = (),
+    pending_policy: str = "fail",
 ) -> LightningRunPlan:
     """Build a shell-safe, credential-free launch plan without contacting Lightning."""
     if Path(spec.model["source"]).expanduser().exists():
@@ -534,8 +645,7 @@ def build_lightning_plan(
         )
     teamspace = _require_teamspace(teamspace)
     studio = _require_identifier(studio, "studio")
-    if _MACHINE.fullmatch(machine) is None:
-        raise LightningConfigError("machine contains unsupported characters")
+    machine = _normalize_machine(machine)
     if max_runtime is not None and max_runtime <= 0:
         raise LightningConfigError("max_runtime must be positive")
     run_id = _require_identifier(
@@ -546,6 +656,13 @@ def build_lightning_plan(
         spec,
         remote_root=remote_root,
         skip_gguf=skip_gguf,
+    )
+    allocation = _allocation_policy(
+        primary_machine=machine,
+        allocation_timeout_seconds=allocation_timeout_seconds,
+        allocation_retry_seconds=allocation_retry_seconds,
+        fallback_machines=fallback_machines,
+        pending_policy=pending_policy,
     )
     env_names: list[str] = []
     for name in forwarded_environment:
@@ -595,7 +712,7 @@ def build_lightning_plan(
         run_id=run_id,
         teamspace=teamspace,
         studio=studio,
-        machine=machine.upper(),
+        machine=machine,
         remote_root=runtime.remote_root,
         remote_bundle=remote_bundle,
         remote_source=remote_source,
@@ -607,6 +724,7 @@ def build_lightning_plan(
         interruptible=interruptible,
         max_runtime=max_runtime,
         skip_gguf=skip_gguf,
+        allocation=allocation,
     )
 
 
@@ -619,18 +737,462 @@ def _machine_value(machine_class: Any, name: str) -> Any:
         raise LightningConfigError(f"unknown Lightning machine: {name}") from error
 
 
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _duration(started: float, completed: float) -> float:
+    return round(max(0.0, completed - started), 3)
+
+
+def _status_name(status: object) -> str:
+    return str(status).rsplit(".", 1)[-1].lower()
+
+
 def _status_is_running(status: object) -> bool:
-    return str(status).rsplit(".", 1)[-1].lower() == "running"
+    return _status_name(status) == "running"
 
 
-def _start_studio(studio: Any, machine_class: Any, plan: Any) -> None:
+def _status_is_pending(status: object) -> bool:
+    return _status_name(status) == "pending"
+
+
+def _status_is_stopped(status: object) -> bool:
+    return _status_name(status) == "stopped"
+
+
+def _machine_identity(machine: object) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", str(machine).rsplit(".", 1)[-1]).upper()
+
+
+def _actual_machine(studio: Any) -> str | None:
+    machine = getattr(studio, "machine", None)
+    if machine is None:
+        return None
+    return str(machine).rsplit(".", 1)[-1].upper()
+
+
+def _machine_matches(machine: object, candidates: Sequence[str]) -> bool:
+    actual = _machine_identity(machine)
+    return any(actual == _machine_identity(candidate) for candidate in candidates)
+
+
+def _start_studio(
+    studio: Any,
+    machine_class: Any,
+    machine: str,
+    *,
+    interruptible: bool,
+    max_runtime: int | None,
+) -> None:
     arguments: dict[str, Any] = {
-        "machine": _machine_value(machine_class, plan.machine),
-        "interruptible": plan.interruptible,
+        "machine": _machine_value(machine_class, machine),
+        "interruptible": interruptible,
     }
-    if plan.max_runtime is not None:
-        arguments["max_runtime"] = plan.max_runtime
+    if max_runtime is not None:
+        arguments["max_runtime"] = max_runtime
     studio.start(**arguments)
+
+
+def _direct_start_attempt(
+    studio: Any,
+    machine_class: Any,
+    machine: str,
+    *,
+    interruptible: bool,
+    max_runtime: int | None,
+    timeout_seconds: float,
+    status_callback: Callable[[dict[str, Any]], None],
+) -> str:
+    del timeout_seconds, status_callback
+    try:
+        _start_studio(
+            studio,
+            machine_class,
+            machine,
+            interruptible=interruptible,
+            max_runtime=max_runtime,
+        )
+    except Exception as error:
+        error_name = type(error).__name__
+        if error_name == "OutOfCapacityError":
+            return "out_of_capacity"
+        if error_name == "NotSupportedError":
+            return "not_supported"
+        raise
+    return "running"
+
+
+def _subprocess_start_attempt(
+    remote: Any,
+    teamspace: str,
+    studio: str,
+    machine: str,
+    *,
+    interruptible: bool,
+    max_runtime: int | None,
+    timeout_seconds: float,
+    poll_seconds: float,
+    status_callback: Callable[[dict[str, Any]], None],
+) -> str:
+    command = [
+        sys.executable,
+        "-m",
+        "abliteralus.lightning_surgery",
+        "_start-once",
+        "--teamspace",
+        teamspace,
+        "--studio",
+        studio,
+        "--machine",
+        machine,
+    ]
+    if interruptible:
+        command.append("--interruptible")
+    if max_runtime is not None:
+        command.extend(["--max-runtime", str(max_runtime)])
+    started_clock = time.monotonic()
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+    observed_pending = False
+    try:
+        while True:
+            return_code = process.poll()
+            if return_code is not None:
+                if return_code == 0:
+                    return "running"
+                if return_code == _START_OUT_OF_CAPACITY:
+                    return "out_of_capacity"
+                if return_code == _START_NOT_SUPPORTED:
+                    return "not_supported"
+                if return_code == _START_STATE_CHANGED:
+                    return "state_changed"
+                return "error"
+
+            try:
+                status = _status_name(remote.status)
+            except Exception:
+                status = "unavailable"
+            status_callback(
+                {
+                    "status": status,
+                    "observed_at": _utc_timestamp(),
+                    "elapsed_seconds": _duration(started_clock, time.monotonic()),
+                }
+            )
+            if status == "running":
+                return "running"
+            if status == "pending":
+                observed_pending = True
+            elif status == "stopped" and observed_pending:
+                return "error"
+
+            remaining = timeout_seconds - (time.monotonic() - started_clock)
+            if remaining <= 0:
+                return "timeout"
+            try:
+                process.wait(timeout=min(poll_seconds, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def _write_allocation_journal(
+    path: Path | None,
+    *,
+    requested_machine: str,
+    policy: LightningAllocationPolicy,
+    state: str,
+    attempts: Sequence[dict[str, Any]],
+) -> None:
+    if path is None:
+        return
+    payload = {
+        "requested_machine": requested_machine,
+        "policy": policy.to_dict(),
+        "state": state,
+        "attempts": list(attempts),
+        "updated_at": _utc_timestamp(),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _allocation_result(
+    *,
+    requested_machine: str,
+    selected_machine: str,
+    mode: str,
+    started_at: str,
+    started_clock: float,
+    attempts: Sequence[dict[str, Any]],
+    clock: Callable[[], float],
+) -> LightningAllocationResult:
+    completed_clock = clock()
+    return LightningAllocationResult(
+        requested_machine=requested_machine,
+        selected_machine=selected_machine,
+        mode=mode,
+        started_at=started_at,
+        completed_at=_utc_timestamp(),
+        duration_seconds=_duration(started_clock, completed_clock),
+        attempts=tuple(attempts),
+    )
+
+
+def _ensure_studio_running(
+    studio: Any,
+    *,
+    requested_machine: str,
+    policy: LightningAllocationPolicy,
+    reuse_running: bool,
+    start_attempt: Callable[[str, float, Callable[[dict[str, Any]], None]], str],
+    journal_path: Path | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> LightningAllocationResult:
+    candidates = (requested_machine, *policy.fallback_machines)
+    started_at = _utc_timestamp()
+    started_clock = clock()
+    deadline = started_clock + policy.timeout_seconds
+    attempts: list[dict[str, Any]] = []
+    pending_stopped = False
+
+    def persist(state: str) -> None:
+        _write_allocation_journal(
+            journal_path,
+            requested_machine=requested_machine,
+            policy=policy,
+            state=state,
+            attempts=attempts,
+        )
+
+    status = _status_name(studio.status)
+    if status == "running":
+        if not reuse_running:
+            persist("running_requires_reuse")
+            raise RuntimeError(
+                "Studio is already running; pass --reuse-running to use it without "
+                "changing or automatically stopping its machine"
+            )
+        actual = getattr(studio, "machine", None)
+        if actual is not None and not _machine_matches(actual, candidates):
+            persist("running_machine_mismatch")
+            raise LightningAllocationError(
+                "running Studio machine is outside the requested allocation policy"
+            )
+        result = _allocation_result(
+            requested_machine=requested_machine,
+            selected_machine=_actual_machine(studio) or requested_machine,
+            mode="reused_running",
+            started_at=started_at,
+            started_clock=started_clock,
+            attempts=attempts,
+            clock=clock,
+        )
+        persist("running")
+        return result
+
+    if status == "pending":
+        if policy.pending_policy == "fail":
+            persist("pending_requires_policy")
+            raise LightningAllocationError(
+                "Studio is Pending; choose --pending-policy adopt or stop for unattended recovery"
+            )
+        reconcile_started = clock()
+        reconcile_started_at = _utc_timestamp()
+        if policy.pending_policy == "stop":
+            studio.stop()
+            pending_stopped = True
+        while True:
+            status = _status_name(studio.status)
+            if status == "running" and policy.pending_policy == "adopt":
+                actual = getattr(studio, "machine", None)
+                if actual is not None and not _machine_matches(actual, candidates):
+                    persist("adopted_machine_mismatch")
+                    raise LightningAllocationError(
+                        "adopted Studio machine is outside the requested allocation policy"
+                    )
+                completed = clock()
+                attempts.append(
+                    {
+                        "machine": _actual_machine(studio) or requested_machine,
+                        "started_at": reconcile_started_at,
+                        "completed_at": _utc_timestamp(),
+                        "duration_seconds": _duration(reconcile_started, completed),
+                        "outcome": "adopted_pending",
+                    }
+                )
+                result = _allocation_result(
+                    requested_machine=requested_machine,
+                    selected_machine=_actual_machine(studio) or requested_machine,
+                    mode="adopted_pending",
+                    started_at=started_at,
+                    started_clock=started_clock,
+                    attempts=attempts,
+                    clock=clock,
+                )
+                try:
+                    persist("running")
+                except OSError:
+                    _stop_owned_studio(studio)
+                    raise
+                return result
+            if status == "stopped":
+                attempts.append(
+                    {
+                        "machine": requested_machine,
+                        "started_at": reconcile_started_at,
+                        "completed_at": _utc_timestamp(),
+                        "duration_seconds": _duration(reconcile_started, clock()),
+                        "outcome": (
+                            "stopped_pending" if policy.pending_policy == "stop" else "pending_ended"
+                        ),
+                    }
+                )
+                persist("retrying")
+                break
+            if status != "pending":
+                persist("pending_reconciliation_failed")
+                raise LightningAllocationError(
+                    f"Studio left Pending in unsupported state {status!r}"
+                )
+            remaining = deadline - clock()
+            if remaining <= 0:
+                _stop_owned_studio(studio)
+                persist("allocation_timeout")
+                raise LightningAllocationError(
+                    "Studio remained Pending beyond the allocation timeout"
+                )
+            sleeper(min(policy.retry_seconds, remaining))
+    elif status != "stopped":
+        persist("unsupported_initial_state")
+        raise LightningAllocationError(f"Studio cannot be allocated from state {status!r}")
+
+    unsupported: set[str] = set()
+    while True:
+        for machine in candidates:
+            if machine in unsupported:
+                continue
+            remaining = deadline - clock()
+            if remaining <= 0:
+                persist("allocation_timeout")
+                raise LightningAllocationError(
+                    "no requested Studio machine became available before the allocation timeout"
+                )
+            attempt_started = clock()
+            attempt_started_at = _utc_timestamp()
+            attempt: dict[str, Any] = {
+                "machine": machine,
+                "started_at": attempt_started_at,
+                "completed_at": None,
+                "duration_seconds": None,
+                "outcome": "starting",
+                "status_polls": [],
+            }
+            attempts.append(attempt)
+            persist("starting")
+
+            def record_status(observation: dict[str, Any]) -> None:
+                attempt["status_polls"].append(observation)
+                persist("starting")
+
+            try:
+                outcome = start_attempt(machine, remaining, record_status)
+            except KeyboardInterrupt:
+                attempt.update(
+                    completed_at=_utc_timestamp(),
+                    duration_seconds=_duration(attempt_started, clock()),
+                    outcome="interrupted",
+                )
+                _stop_owned_studio(studio)
+                persist("interrupted")
+                raise
+            except Exception:
+                attempt.update(
+                    completed_at=_utc_timestamp(),
+                    duration_seconds=_duration(attempt_started, clock()),
+                    outcome="error",
+                )
+                _stop_owned_studio(studio)
+                persist("error")
+                raise
+            attempt.update(
+                completed_at=_utc_timestamp(),
+                duration_seconds=_duration(attempt_started, clock()),
+                outcome=outcome,
+            )
+            if outcome == "running":
+                actual = getattr(studio, "machine", None)
+                if actual is not None and not _machine_matches(actual, (machine,)):
+                    persist("started_machine_mismatch")
+                    raise LightningAllocationError(
+                        "Studio reached Running on a machine other than the selected candidate"
+                    )
+                result = _allocation_result(
+                    requested_machine=requested_machine,
+                    selected_machine=_actual_machine(studio) or machine,
+                    mode="started_after_pending_stop" if pending_stopped else "started",
+                    started_at=started_at,
+                    started_clock=started_clock,
+                    attempts=attempts,
+                    clock=clock,
+                )
+                try:
+                    persist("running")
+                except OSError:
+                    _stop_owned_studio(studio)
+                    raise
+                return result
+            persist("retrying")
+            if outcome == "not_supported":
+                unsupported.add(machine)
+                continue
+            if outcome == "timeout":
+                _stop_owned_studio(studio)
+                persist("allocation_timeout")
+                raise LightningAllocationError(
+                    "Studio start did not complete before the allocation timeout"
+                )
+            if outcome == "state_changed":
+                persist("state_changed")
+                raise LightningAllocationError(
+                    "Studio state changed during allocation; refusing to assume ownership"
+                )
+            if outcome == "error":
+                _stop_owned_studio(studio)
+                persist("error")
+                raise LightningAllocationError("Lightning Studio start worker failed")
+            if outcome != "out_of_capacity":
+                persist("error")
+                raise LightningAllocationError("Lightning Studio start returned an unknown outcome")
+        if len(unsupported) == len(candidates):
+            persist("not_supported")
+            raise LightningAllocationError("none of the requested Studio machines are supported")
+        remaining = deadline - clock()
+        if remaining <= 0:
+            persist("allocation_timeout")
+            raise LightningAllocationError(
+                "no requested Studio machine became available before the allocation timeout"
+            )
+        sleeper(min(policy.retry_seconds, remaining))
+
+
+def _stop_owned_studio(studio: Any) -> bool:
+    if _status_name(studio.status) not in {"running", "pending"}:
+        return False
+    studio.stop()
+    return True
 
 
 def _forward_environment(studio: Any, names: Sequence[str]) -> dict[str, tuple[bool, str | None]]:
@@ -701,6 +1263,7 @@ def execute_provision_plan(
 ) -> dict[str, Any]:
     """Materialize one persistent lock-addressed runtime and release owned compute."""
 
+    use_start_subprocess = studio_class is None or machine_class is None
     if studio_class is None or machine_class is None:
         try:
             from lightning_sdk import Machine, Studio
@@ -718,9 +1281,20 @@ def execute_provision_plan(
     )
 
     started_here = False
+    adopted_pending = False
+    owns_compute = False
+    allocation_ready = False
+    studio_stopped = False
+    allocation_result: LightningAllocationResult | None = None
     remote_exit_code: int | None = None
     remote_output = ""
     stage = "prepare"
+    operation_started_at = _utc_timestamp()
+    operation_started_clock = time.monotonic()
+    remote_started_at: str | None = None
+    remote_completed_at: str | None = None
+    remote_started_clock: float | None = None
+    remote_completed_clock: float | None = None
     with tempfile.TemporaryDirectory(prefix="abliteralus-provision-") as temporary:
         bundle_path = Path(temporary) / f"{plan.runtime.key}.zip"
         bundle = build_runtime_bundle(repo_root, spec, bundle_path)
@@ -733,17 +1307,51 @@ def execute_provision_plan(
             teamspace=plan.teamspace,
             create_ok=True,
         )
-        already_running = _status_is_running(studio.status)
-        if already_running and not reuse_running:
-            raise RuntimeError(
-                "Studio is already running; pass --reuse-running to provision it without "
-                "changing or automatically stopping its machine"
+        if use_start_subprocess:
+            start_attempt = lambda machine, timeout, status_callback: _subprocess_start_attempt(
+                studio,
+                plan.teamspace,
+                plan.studio,
+                machine,
+                interruptible=plan.interruptible,
+                max_runtime=plan.max_runtime,
+                timeout_seconds=timeout,
+                poll_seconds=plan.allocation.retry_seconds,
+                status_callback=status_callback,
             )
-        if not already_running:
-            _start_studio(studio, machine_class, plan)
-            started_here = True
-
+        else:
+            start_attempt = lambda machine, timeout, status_callback: _direct_start_attempt(
+                studio,
+                machine_class,
+                machine,
+                interruptible=plan.interruptible,
+                max_runtime=plan.max_runtime,
+                timeout_seconds=timeout,
+                status_callback=status_callback,
+            )
         try:
+            allocation_result = _ensure_studio_running(
+                studio,
+                requested_machine=plan.machine,
+                policy=plan.allocation,
+                reuse_running=reuse_running,
+                start_attempt=start_attempt,
+                journal_path=local_output / "allocation.json",
+            )
+            allocation_ready = True
+            owns_compute = allocation_result.owns_compute
+            started_here = allocation_result.started_here
+            adopted_pending = allocation_result.mode == "adopted_pending"
+            if use_start_subprocess and allocation_result.mode != "reused_running":
+                # The start worker owns its SDK keep-alive thread. Re-resolving a
+                # now-Running Studio starts one in this long-lived controller too.
+                studio = studio_class(
+                    name=plan.studio,
+                    teamspace=plan.teamspace,
+                    create_ok=False,
+                )
+            remote_started_at = _utc_timestamp()
+            remote_started_clock = time.monotonic()
             remote_output, remote_exit_code = studio.run_with_exit_code(plan.prepare_command)
             (local_output / "studio-prepare.log").write_text(
                 remote_output, encoding="utf-8", errors="replace"
@@ -755,10 +1363,14 @@ def execute_provision_plan(
                 (local_output / "studio-provision.log").write_text(
                     remote_output, encoding="utf-8", errors="replace"
                 )
+            remote_completed_clock = time.monotonic()
+            remote_completed_at = _utc_timestamp()
         finally:
-            if started_here and not keep_running:
-                studio.stop()
+            should_stop = owns_compute and (not keep_running or not allocation_ready)
+            if should_stop:
+                studio_stopped = _stop_owned_studio(studio)
 
+    operation_completed_clock = time.monotonic()
     result = {
         "runtime_key": plan.runtime.key,
         "runtime_variant": plan.runtime.variant,
@@ -766,7 +1378,21 @@ def execute_provision_plan(
         "failed_stage": stage if remote_exit_code != 0 else None,
         "local_output": str(local_output),
         "studio_started_here": started_here,
-        "studio_stopped": started_here and not keep_running,
+        "studio_adopted_pending": adopted_pending,
+        "studio_stopped": studio_stopped,
+        "allocation": allocation_result.to_dict() if allocation_result is not None else None,
+        "timing": {
+            "started_at": operation_started_at,
+            "completed_at": _utc_timestamp(),
+            "total_seconds": _duration(operation_started_clock, operation_completed_clock),
+            "remote_started_at": remote_started_at,
+            "remote_completed_at": remote_completed_at,
+            "remote_seconds": (
+                _duration(remote_started_clock, remote_completed_clock)
+                if remote_started_clock is not None and remote_completed_clock is not None
+                else None
+            ),
+        },
     }
     (local_output / "provision-result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -826,6 +1452,85 @@ def execute_runtime_doctor(
     return result
 
 
+def execute_studio_start(
+    *,
+    teamspace: str,
+    studio: str,
+    machine: str,
+    allocation: LightningAllocationPolicy,
+    interruptible: bool = False,
+    max_runtime: int | None = None,
+    local_output: Path | None = None,
+    studio_class: Any | None = None,
+    machine_class: Any | None = None,
+) -> dict[str, Any]:
+    """Start or reconcile a Studio while bounding local allocation wait."""
+
+    teamspace = _require_teamspace(teamspace)
+    studio = _require_identifier(studio, "studio")
+    machine = _normalize_machine(machine)
+    if max_runtime is not None and max_runtime <= 0:
+        raise LightningConfigError("max_runtime must be positive")
+    use_start_subprocess = studio_class is None or machine_class is None
+    if studio_class is None or machine_class is None:
+        try:
+            from lightning_sdk import Machine, Studio
+        except ImportError as error:
+            raise RuntimeError(
+                "Lightning support is not installed; use the 'lightning' optional dependency"
+            ) from error
+        studio_class = Studio
+        machine_class = Machine
+
+    destination = local_output.resolve() if local_output is not None else None
+    if destination is not None:
+        destination.mkdir(parents=True, exist_ok=True)
+    remote = studio_class(name=studio, teamspace=teamspace, create_ok=True)
+    if use_start_subprocess:
+        start_attempt = lambda candidate, timeout, status_callback: _subprocess_start_attempt(
+            remote,
+            teamspace,
+            studio,
+            candidate,
+            interruptible=interruptible,
+            max_runtime=max_runtime,
+            timeout_seconds=timeout,
+            poll_seconds=allocation.retry_seconds,
+            status_callback=status_callback,
+        )
+    else:
+        start_attempt = lambda candidate, timeout, status_callback: _direct_start_attempt(
+            remote,
+            machine_class,
+            candidate,
+            interruptible=interruptible,
+            max_runtime=max_runtime,
+            timeout_seconds=timeout,
+            status_callback=status_callback,
+        )
+    allocation_result = _ensure_studio_running(
+        remote,
+        requested_machine=machine,
+        policy=allocation,
+        reuse_running=True,
+        start_attempt=start_attempt,
+        journal_path=destination / "allocation.json" if destination is not None else None,
+    )
+
+    result = {
+        "teamspace": teamspace,
+        "studio": studio,
+        "status": _status_name(remote.status),
+        "machine": _actual_machine(remote) or allocation_result.selected_machine,
+        "allocation": allocation_result.to_dict(),
+    }
+    if destination is not None:
+        (destination / "studio-start-result.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return result
+
+
 def execute_lightning_plan(
     plan: LightningRunPlan,
     *,
@@ -841,6 +1546,7 @@ def execute_lightning_plan(
     """Execute a blocking Studio run and release only compute started here."""
     if collect not in {"none", "summary", "all"}:
         raise LightningConfigError("collect must be none, summary, or all")
+    use_start_subprocess = studio_class is None or machine_class is None
     if studio_class is None or machine_class is None:
         try:
             from lightning_sdk import Machine, Studio
@@ -858,10 +1564,21 @@ def execute_lightning_plan(
     )
 
     started_here = False
+    adopted_pending = False
+    owns_compute = False
+    allocation_ready = False
+    studio_stopped = False
+    allocation_result: LightningAllocationResult | None = None
     remote_exit_code: int | None = None
     remote_output = ""
     downloaded: list[str] = []
     previous_environment: dict[str, tuple[bool, str | None]] = {}
+    operation_started_at = _utc_timestamp()
+    operation_started_clock = time.monotonic()
+    remote_started_at: str | None = None
+    remote_completed_at: str | None = None
+    remote_started_clock: float | None = None
+    remote_completed_clock: float | None = None
     with tempfile.TemporaryDirectory(prefix="abliteralus-lightning-") as temporary:
         bundle_path = Path(temporary) / f"{plan.run_id}.zip"
         bundle = build_runtime_bundle(repo_root, spec, bundle_path)
@@ -874,17 +1591,49 @@ def execute_lightning_plan(
             teamspace=plan.teamspace,
             create_ok=True,
         )
-        already_running = _status_is_running(studio.status)
-        if already_running and not reuse_running:
-            raise RuntimeError(
-                "Studio is already running; pass --reuse-running to use it without "
-                "changing or automatically stopping its machine"
+        if use_start_subprocess:
+            start_attempt = lambda machine, timeout, status_callback: _subprocess_start_attempt(
+                studio,
+                plan.teamspace,
+                plan.studio,
+                machine,
+                interruptible=plan.interruptible,
+                max_runtime=plan.max_runtime,
+                timeout_seconds=timeout,
+                poll_seconds=plan.allocation.retry_seconds,
+                status_callback=status_callback,
             )
-        if not already_running:
-            _start_studio(studio, machine_class, plan)
-            started_here = True
-
+        else:
+            start_attempt = lambda machine, timeout, status_callback: _direct_start_attempt(
+                studio,
+                machine_class,
+                machine,
+                interruptible=plan.interruptible,
+                max_runtime=plan.max_runtime,
+                timeout_seconds=timeout,
+                status_callback=status_callback,
+            )
         try:
+            allocation_result = _ensure_studio_running(
+                studio,
+                requested_machine=plan.machine,
+                policy=plan.allocation,
+                reuse_running=reuse_running,
+                start_attempt=start_attempt,
+                journal_path=local_output / "allocation.json",
+            )
+            allocation_ready = True
+            owns_compute = allocation_result.owns_compute
+            started_here = allocation_result.started_here
+            adopted_pending = allocation_result.mode == "adopted_pending"
+            if use_start_subprocess and allocation_result.mode != "reused_running":
+                studio = studio_class(
+                    name=plan.studio,
+                    teamspace=plan.teamspace,
+                    create_ok=False,
+                )
+            remote_started_at = _utc_timestamp()
+            remote_started_clock = time.monotonic()
             doctor_output, doctor_exit_code = studio.run_with_exit_code(plan.doctor_command)
             (local_output / "runtime-doctor.log").write_text(
                 doctor_output, encoding="utf-8", errors="replace"
@@ -906,13 +1655,17 @@ def execute_lightning_plan(
                 destination.mkdir(parents=True, exist_ok=True)
                 studio.download_folder(plan.remote_output, str(destination))
                 downloaded = ["artifacts/"]
+            remote_completed_clock = time.monotonic()
+            remote_completed_at = _utc_timestamp()
         finally:
             try:
                 _restore_environment(studio, previous_environment)
             finally:
-                if started_here and not keep_running:
-                    studio.stop()
+                should_stop = owns_compute and (not keep_running or not allocation_ready)
+                if should_stop:
+                    studio_stopped = _stop_owned_studio(studio)
 
+    operation_completed_clock = time.monotonic()
     result = {
         "run_id": plan.run_id,
         "runtime_key": plan.runtime.key,
@@ -921,7 +1674,21 @@ def execute_lightning_plan(
         "downloaded": downloaded,
         "local_output": str(local_output),
         "studio_started_here": started_here,
-        "studio_stopped": started_here and not keep_running,
+        "studio_adopted_pending": adopted_pending,
+        "studio_stopped": studio_stopped,
+        "allocation": allocation_result.to_dict() if allocation_result is not None else None,
+        "timing": {
+            "started_at": operation_started_at,
+            "completed_at": _utc_timestamp(),
+            "total_seconds": _duration(operation_started_clock, operation_completed_clock),
+            "remote_started_at": remote_started_at,
+            "remote_completed_at": remote_completed_at,
+            "remote_seconds": (
+                _duration(remote_started_clock, remote_completed_clock)
+                if remote_started_clock is not None and remote_completed_clock is not None
+                else None
+            ),
+        },
     }
     (local_output / "lightning-result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -944,6 +1711,13 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="abliteralus-lightning",
@@ -951,7 +1725,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    def add_target(command: argparse.ArgumentParser, *, machine: str | None = None) -> None:
+    def add_target(
+        command: argparse.ArgumentParser,
+        *,
+        machine: str | None = None,
+        remote_root: bool = True,
+    ) -> None:
         command.add_argument(
             "--teamspace", default=os.environ.get("LIGHTNING_TEAMSPACE"), required=False
         )
@@ -959,7 +1738,34 @@ def _parser() -> argparse.ArgumentParser:
         if machine is not None:
             command.add_argument("--machine", default=machine)
             command.add_argument("--max-runtime", type=_positive_integer)
-        command.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
+        if remote_root:
+            command.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
+
+    def add_allocation(command: argparse.ArgumentParser) -> None:
+        command.add_argument(
+            "--allocation-timeout",
+            type=_positive_float,
+            default=DEFAULT_ALLOCATION_TIMEOUT_SECONDS,
+            help="maximum local seconds for capacity retries and Pending reconciliation",
+        )
+        command.add_argument(
+            "--allocation-retry",
+            type=_positive_float,
+            default=DEFAULT_ALLOCATION_RETRY_SECONDS,
+            help="seconds between capacity checks",
+        )
+        command.add_argument(
+            "--fallback-machine",
+            action="append",
+            default=[],
+            help="explicit ordered fallback; repeat for more than one",
+        )
+        command.add_argument(
+            "--pending-policy",
+            choices=("fail", "adopt", "stop"),
+            default="fail",
+            help="handling for a Studio already Pending when the command starts",
+        )
 
     for name in ("plan", "run"):
         command = subparsers.add_parser(name)
@@ -969,6 +1775,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--forward-env", action="append", default=[])
         command.add_argument("--interruptible", action="store_true")
         command.add_argument("--skip-gguf", action="store_true")
+        add_allocation(command)
         if name == "run":
             command.add_argument("--local-output", type=Path)
             command.add_argument("--collect", choices=("none", "summary", "all"), default="summary")
@@ -982,10 +1789,19 @@ def _parser() -> argparse.ArgumentParser:
     add_target(provision, machine="CPU-4")
     provision.add_argument("--interruptible", action="store_true")
     provision.add_argument("--skip-gguf", action="store_true")
+    add_allocation(provision)
     provision.add_argument("--local-output", type=Path)
     provision.add_argument("--keep-running", action="store_true")
     provision.add_argument("--reuse-running", action="store_true")
     provision.add_argument("--dry-run", action="store_true")
+
+    start = subparsers.add_parser(
+        "start", help="start or reconcile a Studio with bounded capacity retries"
+    )
+    add_target(start, machine="L40S", remote_root=False)
+    start.add_argument("--interruptible", action="store_true")
+    start.add_argument("--local-output", type=Path)
+    add_allocation(start)
 
     doctor = subparsers.add_parser(
         "doctor", help="inspect one provisioned runtime on an already-running Studio"
@@ -997,15 +1813,51 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _start_once_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--teamspace", required=True)
+    parser.add_argument("--studio", required=True)
+    parser.add_argument("--machine", required=True)
+    parser.add_argument("--interruptible", action="store_true")
+    parser.add_argument("--max-runtime", type=_positive_integer)
+    return parser
+
+
+def _start_once_main(argv: Sequence[str]) -> int:
+    args = _start_once_parser().parse_args(argv)
+    from lightning_sdk import Machine, Studio
+    from lightning_sdk.exceptions import NotSupportedError, OutOfCapacityError
+
+    remote = Studio(name=args.studio, teamspace=args.teamspace, create_ok=False)
+    if not _status_is_stopped(remote.status):
+        return _START_STATE_CHANGED
+    try:
+        _start_studio(
+            remote,
+            Machine,
+            _normalize_machine(args.machine),
+            interruptible=args.interruptible,
+            max_runtime=args.max_runtime,
+        )
+    except OutOfCapacityError:
+        return _START_OUT_OF_CAPACITY
+    except NotSupportedError:
+        return _START_NOT_SUPPORTED
+    return 0
+
+
 def _main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["_start-once"]:
+        return _start_once_main(arguments[1:])
+    args = _parser().parse_args(arguments)
     if not args.teamspace:
         raise LightningConfigError(
             "--teamspace OWNER/TEAMSPACE is required (or set LIGHTNING_TEAMSPACE)"
         )
     repo_root = _repo_root()
-    spec = load_experiment_spec(args.config)
     if args.command in {"plan", "run"}:
+        spec = load_experiment_spec(args.config)
         plan = build_lightning_plan(
             spec,
             teamspace=args.teamspace,
@@ -1018,6 +1870,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
             interruptible=args.interruptible,
             max_runtime=args.max_runtime,
             skip_gguf=args.skip_gguf,
+            allocation_timeout_seconds=args.allocation_timeout,
+            allocation_retry_seconds=args.allocation_retry,
+            fallback_machines=args.fallback_machine,
+            pending_policy=args.pending_policy,
         )
         if args.command == "plan":
             print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
@@ -1033,6 +1889,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             reuse_running=args.reuse_running,
         )
     elif args.command == "provision":
+        spec = load_experiment_spec(args.config)
         provision_plan = build_provision_plan(
             spec,
             repo_root=repo_root,
@@ -1043,6 +1900,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
             interruptible=args.interruptible,
             max_runtime=args.max_runtime,
             skip_gguf=args.skip_gguf,
+            allocation_timeout_seconds=args.allocation_timeout,
+            allocation_retry_seconds=args.allocation_retry,
+            fallback_machines=args.fallback_machine,
+            pending_policy=args.pending_policy,
         )
         if args.dry_run:
             print(json.dumps(provision_plan.to_dict(), indent=2, sort_keys=True))
@@ -1058,7 +1919,25 @@ def _main(argv: Sequence[str] | None = None) -> int:
             keep_running=args.keep_running,
             reuse_running=args.reuse_running,
         )
+    elif args.command == "start":
+        allocation = _allocation_policy(
+            primary_machine=args.machine,
+            allocation_timeout_seconds=args.allocation_timeout,
+            allocation_retry_seconds=args.allocation_retry,
+            fallback_machines=args.fallback_machine,
+            pending_policy=args.pending_policy,
+        )
+        result = execute_studio_start(
+            teamspace=args.teamspace,
+            studio=args.studio,
+            machine=args.machine,
+            allocation=allocation,
+            interruptible=args.interruptible,
+            max_runtime=args.max_runtime,
+            local_output=args.local_output,
+        )
     else:
+        spec = load_experiment_spec(args.config)
         runtime = build_runtime_layout(
             repo_root,
             spec,

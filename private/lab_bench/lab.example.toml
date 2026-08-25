@@ -18,6 +18,16 @@ surgery_machine = "L40S"
 inference_machine = "L40S"
 remote_root = ".abliteralus"
 forward_environment = ["HF_TOKEN"]
+allocation_timeout_seconds = 900
+allocation_retry_seconds = 30
+pending_policy = "fail"
+# Fallbacks are opt-in. Leave these empty for strict machine selection.
+surgery_fallback_machines = []
+inference_fallback_machines = []
+# Remote compute leases; override per command when an experiment needs a different bound.
+control_max_runtime_seconds = 3600
+surgery_max_runtime_seconds = 14400
+inference_max_runtime_seconds = 3600
 
 [ssh]
 executable = "ssh"

@@ -124,7 +124,8 @@ experiment launch. Provisioning:
 
 A normal surgery launch then:
 
-1. Starts the requested Studio machine if the Studio is stopped.
+1. Starts the requested Studio machine if the Studio is stopped, retrying capacity
+   misses within a bounded local allocation window.
 2. Runs a read-only doctor check for the exact lock-addressed runtime before
    uploading code or forwarding a Hub token.
 3. Uploads the deterministic experiment bundle and runs it directly with the
@@ -212,13 +213,48 @@ Run only after reviewing that plan:
 )
 ```
 
+For a strict unattended H200 request, leave the fallback list empty and set both a
+local allocation deadline and a remote compute lease:
+
+```nu
+(
+  uv run --frozen --extra lightning abliteralus-lightning run
+    --config experiments/surgery/lightning-qwen25-7b.yaml
+    --teamspace OWNER/TEAMSPACE
+    --studio abliteralus-surgery
+    --machine H200
+    --allocation-timeout 1200
+    --allocation-retry 30
+    --pending-policy adopt
+    --max-runtime 14400
+)
+```
+
+`--fallback-machine` is repeatable and ordered, but never implicit. For example,
+`--fallback-machine H100 --fallback-machine L40S` permits those machines only after
+an H200 capacity miss. Omit the flags when the experiment requires H200.
+
 Starting GPU compute incurs Lightning charges. The default run remains attached
 until surgery finishes and then releases compute it started, including after a
 remote failure. If the Studio was already running, the launcher requires
 `--reuse-running` and will not stop or switch that existing machine. Use
 `--keep-running` only when intentionally retaining compute after the run. When the
-launcher owns the start, `--max-runtime SECONDS` forwards an SDK-side allocation
-bound to Lightning.
+launcher owns the start, `--max-runtime SECONDS` forwards Lightning's requested
+remote run duration. It does not bound the local wait for capacity; that is
+`--allocation-timeout` (900 seconds by default).
+
+A Studio already `Pending` is ambiguous after a prior controller exit. The default
+`--pending-policy fail` refuses to take ownership. `adopt` waits for that request,
+then owns and releases it; use this only for a dedicated single-controller Studio.
+`stop` cancels the Pending request and begins a fresh bounded allocation cycle.
+The headless supervisor polls an accepted `Pending` start on the configured retry
+cadence. Allocation attempts and timestamped status observations are written
+incrementally to `allocation.json`. Successful
+result manifests also separate allocation, remote-command, and total elapsed time.
+If startup times out or is interrupted, the controller reconciles the Studio and
+stops any Pending or Running compute it may have requested. The remote
+`--max-runtime` lease is still necessary for a hard local process or machine loss
+that prevents cleanup code from running.
 
 No credential is forwarded implicitly. For a gated model, opt in by naming the
 already-set local variable:

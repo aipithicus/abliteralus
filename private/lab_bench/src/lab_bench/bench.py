@@ -53,6 +53,26 @@ class LabBench:
                 "inference_machine": self.config.lightning.inference_machine,
                 "remote_root": self.config.lightning.remote_root,
                 "forward_environment": list(self.config.lightning.forward_environment),
+                "allocation_timeout_seconds": (
+                    self.config.lightning.allocation_timeout_seconds
+                ),
+                "allocation_retry_seconds": self.config.lightning.allocation_retry_seconds,
+                "pending_policy": self.config.lightning.pending_policy,
+                "surgery_fallback_machines": list(
+                    self.config.lightning.surgery_fallback_machines
+                ),
+                "inference_fallback_machines": list(
+                    self.config.lightning.inference_fallback_machines
+                ),
+                "control_max_runtime_seconds": (
+                    self.config.lightning.control_max_runtime_seconds
+                ),
+                "surgery_max_runtime_seconds": (
+                    self.config.lightning.surgery_max_runtime_seconds
+                ),
+                "inference_max_runtime_seconds": (
+                    self.config.lightning.inference_max_runtime_seconds
+                ),
             },
             "ssh": {
                 "executable": self.config.ssh.executable,
@@ -106,14 +126,31 @@ class LabBench:
         _append_default(expanded, "--teamspace", self.config.lightning.teamspace)
         _append_default(expanded, "--studio", self.config.lightning.studio)
         _append_default(expanded, "--remote-root", self.config.lightning.remote_root)
+        if operation in {"plan", "run", "provision"}:
+            self._append_allocation_defaults(expanded)
         if operation in {"plan", "run"}:
             _append_default(expanded, "--machine", self.config.lightning.surgery_machine)
+            if self.config.lightning.surgery_max_runtime_seconds is not None:
+                _append_default(
+                    expanded,
+                    "--max-runtime",
+                    str(self.config.lightning.surgery_max_runtime_seconds),
+                )
+            self._append_fallback_defaults(
+                expanded, self.config.lightning.surgery_fallback_machines
+            )
             forwarded = set(_option_values(expanded, "--forward-env"))
             for name in self.config.lightning.forward_environment:
                 if name not in forwarded:
                     expanded.extend(["--forward-env", name])
         elif operation == "provision":
             _append_default(expanded, "--machine", self.config.lightning.control_machine)
+            if self.config.lightning.control_max_runtime_seconds is not None:
+                _append_default(
+                    expanded,
+                    "--max-runtime",
+                    str(self.config.lightning.control_max_runtime_seconds),
+                )
         command = self._repository_python("abliteralus.lightning_surgery", expanded)
         if operation == "plan" or (operation == "provision" and "--dry-run" in expanded):
             return self._direct(command)
@@ -185,13 +222,32 @@ class LabBench:
         interruptible: bool = False,
         max_runtime: int | None = None,
     ) -> int:
+        self._require_lightning_target()
         selected_machine = machine or self._machine_for_purpose(purpose)
-        arguments = ["start", "--machine", selected_machine]
+        arguments = [
+            "start",
+            "--teamspace",
+            self.config.lightning.teamspace,
+            "--studio",
+            self.config.lightning.studio,
+            "--machine",
+            selected_machine,
+        ]
+        self._append_allocation_defaults(arguments)
+        self._append_fallback_defaults(arguments, self._fallback_machines_for_purpose(purpose))
         if interruptible:
             arguments.append("--interruptible")
-        if max_runtime is not None:
-            arguments.extend(["--max-runtime", str(max_runtime)])
-        return self._studio_control("control", arguments)
+        selected_max_runtime = (
+            max_runtime if max_runtime is not None else self._max_runtime_for_purpose(purpose)
+        )
+        if selected_max_runtime is not None:
+            arguments.extend(["--max-runtime", str(selected_max_runtime)])
+        command = self._repository_python("abliteralus.lightning_surgery", arguments)
+        return self.manager.run(
+            self.config.profiles.lightning_control,
+            command,
+            cwd=self.config.repository,
+        ).returncode
 
     def studio_stop(self) -> int:
         return self._studio_control("control", ["stop"])
@@ -287,6 +343,44 @@ class LabBench:
         if purpose == "inference":
             return self.config.lightning.inference_machine
         raise LabBenchError(f"unknown Studio purpose: {purpose}")
+
+    def _fallback_machines_for_purpose(self, purpose: str) -> tuple[str, ...]:
+        if purpose == "surgery":
+            return self.config.lightning.surgery_fallback_machines
+        if purpose == "inference":
+            return self.config.lightning.inference_fallback_machines
+        if purpose == "control":
+            return ()
+        raise LabBenchError(f"unknown Studio purpose: {purpose}")
+
+    def _max_runtime_for_purpose(self, purpose: str) -> int | None:
+        if purpose == "control":
+            return self.config.lightning.control_max_runtime_seconds
+        if purpose == "surgery":
+            return self.config.lightning.surgery_max_runtime_seconds
+        if purpose == "inference":
+            return self.config.lightning.inference_max_runtime_seconds
+        raise LabBenchError(f"unknown Studio purpose: {purpose}")
+
+    def _append_allocation_defaults(self, arguments: list[str]) -> None:
+        _append_default(
+            arguments,
+            "--allocation-timeout",
+            str(self.config.lightning.allocation_timeout_seconds),
+        )
+        _append_default(
+            arguments,
+            "--allocation-retry",
+            str(self.config.lightning.allocation_retry_seconds),
+        )
+        _append_default(arguments, "--pending-policy", self.config.lightning.pending_policy)
+
+    @staticmethod
+    def _append_fallback_defaults(arguments: list[str], machines: Sequence[str]) -> None:
+        if _has_option(arguments, "--fallback-machine"):
+            return
+        for machine in machines:
+            arguments.extend(["--fallback-machine", machine])
 
     def _repository_python(self, module: str, arguments: Sequence[str]) -> list[str]:
         if not self.config.repository.is_dir():

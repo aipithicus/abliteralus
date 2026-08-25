@@ -64,8 +64,8 @@ machine, installs the repository-pinned uv into an isolated tool environment, an
 materializes a dependency-only environment keyed by the exact lockfile hash. It
 stops compute that it started unless `--keep-running` is explicit. Package and Hub
 caches live beneath the configured persistent `lightning.remote_root` (default
-`.abliteralus` in the Studio home). `--max-runtime SECONDS` places an SDK-side bound
-on compute started by provision or surgery operations.
+`.abliteralus` in the Studio home). `--max-runtime SECONDS` sets Lightning's remote
+compute lease; it is independent of the local allocation-wait deadline.
 
 To inspect that environment without changing it, start the Studio and run doctor:
 
@@ -85,6 +85,42 @@ checks the exact provisioned runtime. A normal run never installs uv and never r
 ```text
 lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --collect summary
 ```
+
+For a dedicated single-controller H200 Studio, the non-secret policy can be kept in
+`lab.local.toml`:
+
+```toml
+[lightning]
+surgery_machine = "H200"
+allocation_timeout_seconds = 1200
+allocation_retry_seconds = 30
+pending_policy = "adopt"
+surgery_fallback_machines = []
+surgery_max_runtime_seconds = 14400
+```
+
+An empty fallback list is strict: the controller retries H200 until the 20-minute
+deadline and then fails. Add, for example, `surgery_fallback_machines = ["H100"]`
+only when that downgrade is acceptable for the experiment. `pending_policy =
+"adopt"` resumes a request already queued by this dedicated Studio and takes
+responsibility for stopping it after the run. The safer shared-Studio default is
+`"fail"`; `"stop"` cancels a stale Pending request before retrying.
+
+Use both bounds for unattended work:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --max-runtime 14400 --collect summary
+```
+
+The command-line value overrides the configured four-hour surgery lease when a
+particular experiment needs a different ceiling.
+
+The headless supervisor polls accepted `Pending` starts on the configured retry
+cadence and writes each observation into `allocation.json`. It also records
+allocation and remote-phase timing in `lightning-result.json`, and stops Pending or
+Running compute it may have requested when startup times out or is interrupted.
+The remote lease remains the final bound if the local controller itself is killed
+too abruptly to perform API cleanup.
 
 ## Studio lifecycle and brief inference
 

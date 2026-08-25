@@ -47,6 +47,38 @@ def test_config_resolves_paths_and_machine_purposes() -> None:
     assert config.lightning.control_machine == "CPU-4"
     assert config.lightning.remote_root == ".abliteralus"
     assert config.lightning.forward_environment == ("HF_TOKEN",)
+    assert config.lightning.allocation_timeout_seconds == 900.0
+    assert config.lightning.allocation_retry_seconds == 30.0
+    assert config.lightning.pending_policy == "fail"
+    assert config.lightning.surgery_fallback_machines == ()
+    assert config.lightning.surgery_max_runtime_seconds is None
+
+
+def test_config_parses_unattended_allocation_policy() -> None:
+    raw = sample_mapping(Path.cwd())
+    raw["lightning"].update(
+        {
+            "allocation_timeout_seconds": 1200,
+            "allocation_retry_seconds": 15.5,
+            "pending_policy": "adopt",
+            "surgery_fallback_machines": ["H100", "L40S"],
+            "inference_fallback_machines": ["A100-80GB"],
+            "control_max_runtime_seconds": 3600,
+            "surgery_max_runtime_seconds": 14400,
+            "inference_max_runtime_seconds": 1800,
+        }
+    )
+
+    config = parse_config(raw)
+
+    assert config.lightning.allocation_timeout_seconds == 1200.0
+    assert config.lightning.allocation_retry_seconds == 15.5
+    assert config.lightning.pending_policy == "adopt"
+    assert config.lightning.surgery_fallback_machines == ("H100", "L40S")
+    assert config.lightning.inference_fallback_machines == ("A100-80GB",)
+    assert config.lightning.control_max_runtime_seconds == 3600
+    assert config.lightning.surgery_max_runtime_seconds == 14400
+    assert config.lightning.inference_max_runtime_seconds == 1800
 
 
 def test_teamspace_requires_owner_and_name() -> None:
@@ -78,4 +110,22 @@ def test_remote_root_rejects_parent_traversal() -> None:
     raw["lightning"]["remote_root"] = "../shared"
 
     with pytest.raises(LabBenchError, match="relative POSIX path"):
+        parse_config(raw)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("allocation_timeout_seconds", 0),
+        ("allocation_retry_seconds", float("inf")),
+        ("pending_policy", "guess"),
+        ("surgery_fallback_machines", ["H100", "h100"]),
+        ("surgery_max_runtime_seconds", 0),
+    ],
+)
+def test_invalid_allocation_policy_fails_closed(key, value) -> None:
+    raw = sample_mapping(Path.cwd())
+    raw["lightning"][key] = value
+
+    with pytest.raises(LabBenchError):
         parse_config(raw)

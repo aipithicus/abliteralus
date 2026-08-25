@@ -30,6 +30,14 @@ def sample_mapping(repository: Path) -> dict:
             "surgery_machine": "L40S",
             "inference_machine": "L40S",
             "forward_environment": ["HF_TOKEN"],
+            "allocation_timeout_seconds": 1200,
+            "allocation_retry_seconds": 20,
+            "pending_policy": "adopt",
+            "surgery_fallback_machines": ["H100"],
+            "inference_fallback_machines": ["A100-80GB"],
+            "control_max_runtime_seconds": 3600,
+            "surgery_max_runtime_seconds": 14400,
+            "inference_max_runtime_seconds": 3600,
         },
         "ssh": {
             "executable": sys.executable,
@@ -109,6 +117,11 @@ def test_lightning_plan_adds_defaults_without_credentials(
     assert command.count("--forward-env") == 1
     assert command[command.index("--forward-env") + 1] == "HF_TOKEN"
     assert command[command.index("--remote-root") + 1] == ".abliteralus"
+    assert command[command.index("--allocation-timeout") + 1] == "1200.0"
+    assert command[command.index("--allocation-retry") + 1] == "20.0"
+    assert command[command.index("--pending-policy") + 1] == "adopt"
+    assert command[command.index("--fallback-machine") + 1] == "H100"
+    assert command[command.index("--max-runtime") + 1] == "14400"
 
 
 def test_lightning_run_uses_surgery_profile_and_preserves_overrides(configured_bench) -> None:
@@ -146,6 +159,22 @@ def test_studio_control_and_inference_use_distinct_profiles(configured_bench) ->
     remote = manager.calls[1]["command"][manager.calls[1]["command"].index("--remote-command") + 1]
     assert remote == "python server.py"
     assert manager.calls[1]["command"].count("--forward-env") == 1
+
+
+def test_studio_start_uses_bounded_allocator_and_purpose_fallback(configured_bench) -> None:
+    bench, manager = configured_bench
+
+    assert bench.studio_start(purpose="inference", max_runtime=1800) == 7
+    call = manager.calls[0]
+    command = call["command"]
+
+    assert call["profile"] == "lightning-control"
+    assert command[1:4] == ["-m", "abliteralus.lightning_surgery", "start"]
+    assert command[command.index("--machine") + 1] == "L40S"
+    assert command[command.index("--fallback-machine") + 1] == "A100-80GB"
+    assert command[command.index("--allocation-timeout") + 1] == "1200.0"
+    assert command[command.index("--pending-policy") + 1] == "adopt"
+    assert command[command.index("--max-runtime") + 1] == "1800"
 
 
 def test_studio_provision_uses_control_profile_without_forwarding_hub_token(

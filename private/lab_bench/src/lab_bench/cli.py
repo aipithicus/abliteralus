@@ -135,6 +135,18 @@ def _print_inventory(payload: dict) -> None:
         f"inference={lightning['inference_machine']}"
     )
     print(f"remote root: {lightning['remote_root']}")
+    print(
+        "allocation: "
+        f"timeout={lightning['allocation_timeout_seconds']}s, "
+        f"retry={lightning['allocation_retry_seconds']}s, "
+        f"pending={lightning['pending_policy']}"
+    )
+    print(
+        "remote leases (seconds): "
+        f"control={lightning['control_max_runtime_seconds'] or 'unset'}, "
+        f"surgery={lightning['surgery_max_runtime_seconds'] or 'unset'}, "
+        f"inference={lightning['inference_max_runtime_seconds'] or 'unset'}"
+    )
     ssh = payload["ssh"]
     print(f"SSH: {ssh['destination'] or 'not configured'}")
 

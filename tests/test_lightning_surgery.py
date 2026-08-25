@@ -12,7 +12,10 @@ import yaml
 
 import abliteralus.lightning_surgery as lightning
 from abliteralus.lightning_surgery import (
+    LightningAllocationError,
     LightningConfigError,
+    _allocation_policy,
+    _ensure_studio_running,
     _runtime_paths,
     build_lightning_plan,
     build_provision_plan,
@@ -21,6 +24,7 @@ from abliteralus.lightning_surgery import (
     execute_lightning_plan,
     execute_provision_plan,
     execute_runtime_doctor,
+    execute_studio_start,
 )
 from abliteralus.surgery_bench import load_experiment_spec
 
@@ -127,6 +131,29 @@ def test_plan_is_shell_safe_and_contains_no_forwarded_secret_value(tmp_path, mon
     assert plan.runtime.key in plan.command
     assert plan.runtime.uv_version == "0.12.4"
     assert "private" not in plan.command
+
+
+def test_plan_records_explicit_ordered_allocation_policy(tmp_path):
+    plan = build_lightning_plan(
+        _spec(tmp_path),
+        teamspace="owner/research",
+        studio="abliteralus-surgery",
+        machine="h200",
+        run_id="run-h200",
+        allocation_timeout_seconds=1200,
+        allocation_retry_seconds=20,
+        fallback_machines=["H100", "h100", "L40S"],
+        pending_policy="adopt",
+    )
+
+    assert plan.machine == "H200"
+    assert plan.allocation.fallback_machines == ("H100", "L40S")
+    assert plan.to_dict()["allocation"] == {
+        "timeout_seconds": 1200.0,
+        "retry_seconds": 20.0,
+        "fallback_machines": ["H100", "L40S"],
+        "pending_policy": "adopt",
+    }
 
 
 def test_runtime_identity_is_lock_addressed_and_uses_persistent_caches(tmp_path):
@@ -292,6 +319,297 @@ def _stub_bundle(_repo, _specification, destination, **_kwargs):
     return {"path": str(destination), "sha256": "fixture", "bytes": 6}
 
 
+class OutOfCapacityError(RuntimeError):
+    pass
+
+
+def test_allocator_uses_only_explicit_fallbacks(tmp_path):
+    class Studio:
+        status = "Stopped"
+        machine = None
+
+    attempted: list[str] = []
+
+    def start(machine: str, _remaining: float, status) -> str:
+        attempted.append(machine)
+        status({"status": "pending", "observed_at": "fixture", "elapsed_seconds": 1.0})
+        return "out_of_capacity" if machine == "H200" else "running"
+
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=60,
+        allocation_retry_seconds=5,
+        fallback_machines=["H100"],
+        pending_policy="fail",
+    )
+    result = _ensure_studio_running(
+        Studio(),
+        requested_machine="H200",
+        policy=policy,
+        reuse_running=False,
+        start_attempt=start,
+        journal_path=tmp_path / "allocation.json",
+    )
+
+    assert attempted == ["H200", "H100"]
+    assert result.selected_machine == "H100"
+    assert [attempt["outcome"] for attempt in result.attempts] == [
+        "out_of_capacity",
+        "running",
+    ]
+    journal = json.loads((tmp_path / "allocation.json").read_text(encoding="utf-8"))
+    assert journal["attempts"][1]["status_polls"][0]["status"] == "pending"
+
+
+def test_allocator_strict_mode_retries_only_requested_machine():
+    class Studio:
+        status = "Stopped"
+
+    now = [0.0]
+    attempted: list[str] = []
+
+    def clock() -> float:
+        return now[0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    def start(machine: str, _remaining: float, _status) -> str:
+        attempted.append(machine)
+        return "out_of_capacity"
+
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=5,
+        allocation_retry_seconds=2,
+        fallback_machines=[],
+        pending_policy="fail",
+    )
+    with pytest.raises(LightningAllocationError, match="allocation timeout"):
+        _ensure_studio_running(
+            Studio(),
+            requested_machine="H200",
+            policy=policy,
+            reuse_running=False,
+            start_attempt=start,
+            clock=clock,
+            sleeper=sleep,
+        )
+
+    assert attempted
+    assert set(attempted) == {"H200"}
+
+
+def test_allocator_does_not_stop_compute_when_studio_state_changed_externally():
+    class Studio:
+        status = "Stopped"
+
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    remote = Studio()
+
+    def start(_machine: str, _remaining: float, _status) -> str:
+        remote.status = "Running"
+        return "state_changed"
+
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=5,
+        allocation_retry_seconds=1,
+        fallback_machines=[],
+        pending_policy="fail",
+    )
+    with pytest.raises(LightningAllocationError, match="refusing to assume ownership"):
+        _ensure_studio_running(
+            remote,
+            requested_machine="H200",
+            policy=policy,
+            reuse_running=False,
+            start_attempt=start,
+        )
+
+    assert remote.stopped is False
+
+
+def test_allocator_stops_pending_compute_after_start_timeout():
+    class Studio:
+        status = "Stopped"
+
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+            self.status = "Stopped"
+
+    remote = Studio()
+
+    def start(_machine: str, _remaining: float, _status) -> str:
+        remote.status = "Pending"
+        return "timeout"
+
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=5,
+        allocation_retry_seconds=1,
+        fallback_machines=[],
+        pending_policy="fail",
+    )
+    with pytest.raises(LightningAllocationError, match="did not complete"):
+        _ensure_studio_running(
+            remote,
+            requested_machine="H200",
+            policy=policy,
+            reuse_running=False,
+            start_attempt=start,
+        )
+
+    assert remote.stopped is True
+
+
+def test_headless_start_supervisor_polls_pending_until_running(monkeypatch):
+    class Remote:
+        def __init__(self):
+            self.statuses = iter(["Pending", "Running"])
+
+        @property
+        def status(self):
+            return next(self.statuses)
+
+    class Process:
+        def __init__(self):
+            self.terminated = False
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout):
+            if not self.terminated:
+                raise subprocess.TimeoutExpired("fixture", timeout)
+            assert timeout == 5
+            return 0
+
+        def kill(self):
+            pytest.fail("graceful worker termination should succeed")
+
+    process = Process()
+    monkeypatch.setattr(lightning.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    observations: list[dict] = []
+
+    outcome = lightning._subprocess_start_attempt(
+        Remote(),
+        "owner/research",
+        "studio",
+        "H200",
+        interruptible=False,
+        max_runtime=3600,
+        timeout_seconds=30,
+        poll_seconds=5,
+        status_callback=observations.append,
+    )
+
+    assert outcome == "running"
+    assert [observation["status"] for observation in observations] == ["pending", "running"]
+    assert process.terminated is True
+
+
+def test_allocator_requires_explicit_pending_reconciliation():
+    class Studio:
+        status = "Pending"
+
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=5,
+        allocation_retry_seconds=1,
+        fallback_machines=[],
+        pending_policy="fail",
+    )
+    with pytest.raises(LightningAllocationError, match="Pending"):
+        _ensure_studio_running(
+            Studio(),
+            requested_machine="H200",
+            policy=policy,
+            reuse_running=False,
+            start_attempt=lambda _machine, _remaining, _status: pytest.fail("must not start"),
+        )
+
+
+def test_allocator_can_adopt_pending_machine_without_new_start():
+    class Studio:
+        machine = "H200"
+
+        def __init__(self):
+            self.reads = 0
+
+        @property
+        def status(self):
+            self.reads += 1
+            return "Pending" if self.reads < 3 else "Running"
+
+    now = [0.0]
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=5,
+        allocation_retry_seconds=1,
+        fallback_machines=[],
+        pending_policy="adopt",
+    )
+    result = _ensure_studio_running(
+        Studio(),
+        requested_machine="H200",
+        policy=policy,
+        reuse_running=False,
+        start_attempt=lambda _machine, _remaining, _status: pytest.fail("must not start"),
+        clock=lambda: now[0],
+        sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+
+    assert result.mode == "adopted_pending"
+    assert result.attempts[0]["outcome"] == "adopted_pending"
+
+
+def test_studio_start_retries_capacity_with_explicit_fallback(tmp_path):
+    class CapacityStudio(_FakeStudio):
+        instances = []
+
+        def start(self, **kwargs):
+            self.started.append(kwargs)
+            if kwargs["machine"] == "machine:H200":
+                raise OutOfCapacityError("fixture capacity miss")
+            self.status = "Running"
+
+    CapacityStudio.initial_status = "Stopped"
+    policy = _allocation_policy(
+        primary_machine="H200",
+        allocation_timeout_seconds=60,
+        allocation_retry_seconds=5,
+        fallback_machines=["H100"],
+        pending_policy="fail",
+    )
+    result = execute_studio_start(
+        teamspace="owner/research",
+        studio="studio",
+        machine="H200",
+        allocation=policy,
+        local_output=tmp_path / "start-result",
+        studio_class=CapacityStudio,
+        machine_class=_FakeMachine,
+    )
+    remote = CapacityStudio.instances[-1]
+
+    assert [call["machine"] for call in remote.started] == ["machine:H200", "machine:H100"]
+    assert result["allocation"]["selected_machine"] == "H100"
+    assert remote.stopped is False
+    assert (tmp_path / "start-result/studio-start-result.json").is_file()
+
+
 def test_provision_materializes_runtime_and_stops_owned_compute(tmp_path, monkeypatch):
     repo = _minimal_repo(tmp_path)
     spec = _spec(tmp_path)
@@ -373,6 +691,9 @@ def test_execute_stops_only_compute_it_started(tmp_path, monkeypatch):
     studio = _FakeStudio.instances[-1]
 
     assert result["remote_exit_code"] == 0
+    assert result["allocation"]["selected_machine"] == "L40S"
+    assert result["timing"]["total_seconds"] >= 0
+    assert result["timing"]["remote_seconds"] >= 0
     assert studio.started == [{"machine": "machine:L40S", "interruptible": False}]
     assert studio.stopped is True
     assert (tmp_path / "result/lightning-result.json").is_file()
@@ -436,6 +757,45 @@ def test_remote_failure_still_stops_owned_compute(tmp_path, monkeypatch):
         (tmp_path / "result-failed/lightning-result.json").read_text(encoding="utf-8")
     )
     assert result["remote_exit_code"] == 7
+
+
+def test_interrupted_start_stops_pending_compute_and_records_attempt(tmp_path, monkeypatch):
+    class InterruptedStudio(_FakeStudio):
+        instances = []
+
+        def start(self, **kwargs):
+            self.started.append(kwargs)
+            self.status = "Pending"
+            raise KeyboardInterrupt
+
+    spec = _spec(tmp_path)
+    plan = build_lightning_plan(
+        spec,
+        teamspace="owner/research",
+        studio="studio",
+        machine="H200",
+        run_id="run-interrupted-start",
+    )
+    monkeypatch.setattr(lightning, "build_runtime_bundle", _stub_bundle)
+    InterruptedStudio.initial_status = "Stopped"
+
+    with pytest.raises(KeyboardInterrupt):
+        execute_lightning_plan(
+            plan,
+            spec=spec,
+            repo_root=tmp_path,
+            local_output=tmp_path / "result-interrupted-start",
+            studio_class=InterruptedStudio,
+            machine_class=_FakeMachine,
+        )
+
+    remote = InterruptedStudio.instances[-1]
+    assert remote.stopped is True
+    allocation = json.loads(
+        (tmp_path / "result-interrupted-start/allocation.json").read_text(encoding="utf-8")
+    )
+    assert allocation["state"] == "interrupted"
+    assert allocation["attempts"][-1]["outcome"] == "interrupted"
 
 
 def test_unprovisioned_runtime_fails_before_upload_and_stops_owned_compute(tmp_path, monkeypatch):
