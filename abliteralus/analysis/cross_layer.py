@@ -22,31 +22,76 @@ Contribution: We also compute the "refusal direction flow" --
 the cumulative angular drift of the refusal direction through the network,
 measured as the total geodesic distance on the unit hypersphere.
 
+Rank-k refusal subspaces
+------------------------
+Multi-direction extraction gives each layer a rank-k subspace rather than a
+single direction. Layers are then compared as points of the Grassmann manifold
+Gr(k, d) through their principal angles (:mod:`abliteralus.analysis.grassmann`):
+
+* ``cosine_matrix`` holds the mean principal cosine of each pair -- exactly
+  ``|cos|`` for single directions -- and is the similarity the cluster threshold
+  applies to.
+* ``angular_drift`` / ``total_geodesic_distance`` use the canonical Grassmann
+  geodesic ``||theta||_2`` (the arc on the unit hypersphere when k = 1).
+* ``distance_matrix`` holds projection distances ``||P_i - P_j||_F / sqrt(2)``, a
+  true metric even when some layers carry no signal.
+
+All non-zero layers must share one rank; a layer whose tensor is all zeros is
+kept with rank 0, zero similarity to everything, and a missing-signal sentinel
+step whose principal angles are all pi/2 (``arccos 0`` for single directions,
+as before). Every quantity is gauge invariant: it depends only on each layer's
+span, not on the basis given for it.
+
 References:
     - Arditi et al. (2024): Found refusal concentrated in middle-late layers
     - Joad et al. (2026): Identified 11 geometrically distinct refusal directions
     - Anthropic Biology (2025): Default refusal circuits span specific layer ranges
+    - Edelman, Arias & Smith (1998): geometry of the Grassmann manifold
+    - Bendokat, Zimmermann & Absil (2020): A Grassmann Manifold Handbook (arXiv:2011.13699)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 
 import torch
+
+from abliteralus.analysis.grassmann import (
+    orthonormal_basis,
+    pairwise_projection_distances,
+)
+
+
+def _missing_signal_geodesic_step(rank: int) -> float:
+    """Sentinel drift for an absent layer: the norm of ``max(rank, 1)`` right angles."""
+    return math.sqrt(max(rank, 1)) * math.pi / 2.0
 
 
 @dataclass
 class CrossLayerResult:
-    """Result of cross-layer alignment analysis."""
+    """Result of cross-layer alignment analysis.
 
-    cosine_matrix: torch.Tensor             # (n_layers, n_layers) pairwise cosines
+    Each layer contributes a refusal *subspace*: a single direction ``(hidden_dim,)``
+    or a rank-k basis ``(k, hidden_dim)``. Layers are compared as points of the
+    Grassmann manifold Gr(k, d), so every quantity below depends only on the span,
+    never on the basis chosen for it. For single directions the numbers coincide
+    with the historical cosine-based ones.
+    """
+
+    cosine_matrix: torch.Tensor             # (n_layers, n_layers) mean principal cosine; |cos| for k=1
     layer_indices: list[int]                # which layers have refusal directions
     clusters: list[list[int]]               # groups of aligned layers
-    angular_drift: list[float]              # cumulative angular drift per layer
-    total_geodesic_distance: float          # total direction drift through network
+    angular_drift: list[float]              # cumulative canonical geodesic distance per layer
+    total_geodesic_distance: float          # sum of adjacent-layer geodesic distances (||theta||_2)
     mean_adjacent_cosine: float             # avg cosine between consecutive layers
     direction_persistence_score: float      # 0=independent per layer, 1=single direction
     cluster_count: int                      # number of distinct direction clusters
+    distance_matrix: torch.Tensor = field(default_factory=lambda: torch.zeros(0, 0))
+    # (n_layers, n_layers) projection distances ||P_i - P_j||_F / sqrt(2): a metric for any ranks
+    subspace_rank: int = 1                  # common rank of the non-zero layer subspaces
+    subspace_ranks: dict[int, int] = field(default_factory=dict)
+    # per-layer rank after orthonormalization; 0 marks a zero (absent) refusal signal
 
 
 class CrossLayerAlignmentAnalyzer:
@@ -72,13 +117,21 @@ class CrossLayerAlignmentAnalyzer:
         """Compute cross-layer alignment analysis.
 
         Args:
-            refusal_directions: {layer_idx: direction_tensor} for each layer.
-                Directions should be (hidden_dim,) unit vectors.
+            refusal_directions: {layer_idx: tensor} for each layer. A tensor is a
+                single direction ``(hidden_dim,)`` / ``(1, hidden_dim)`` or a
+                rank-k subspace basis ``(k, hidden_dim)``; rows need not be unit
+                or orthogonal. Every non-zero layer must have the same rank after
+                orthonormalization (dependent rows are dropped); a layer whose
+                tensor is all zeros is treated as carrying no refusal signal.
             strong_layers: Optional subset of layers to analyze. If None,
                 all layers with directions are included.
 
         Returns:
             CrossLayerResult with full alignment analysis.
+
+        Raises:
+            ValueError: if the non-zero layers have different ranks, or if the
+                ambient dimensions differ.
         """
         if strong_layers is not None:
             indices = sorted(strong_layers)
@@ -97,21 +150,44 @@ class CrossLayerAlignmentAnalyzer:
                 cluster_count=0,
             )
 
-        # Stack all directions into a matrix
-        directions = []
-        for idx in indices:
-            d = refusal_directions[idx].float()
-            if d.dim() > 1:
-                d = d.squeeze()
-            d = d / d.norm().clamp(min=1e-8)
-            directions.append(d)
-
-        D = torch.stack(directions)  # (n_layers, hidden_dim)
+        # Rank-revealing orthonormal basis per layer (CPU float64, gauge free).
+        bases = [orthonormal_basis(refusal_directions[idx]) for idx in indices]
         n = len(indices)
+        ranks = {idx: int(b.shape[0]) for idx, b in zip(indices, bases)}
+        nonzero = [i for i, b in enumerate(bases) if b.shape[0] > 0]
+        distinct = sorted({bases[i].shape[0] for i in nonzero})
+        if len(distinct) > 1:
+            detail = ", ".join(f"layer {indices[i]}: rank {bases[i].shape[0]}" for i in nonzero)
+            raise ValueError(
+                "refusal subspaces must have a uniform rank across layers "
+                f"(dependent directions are dropped): {detail}"
+            )
+        widths = {b.shape[1] for b in bases}
+        if len(widths) > 1:
+            raise ValueError(f"refusal subspaces have different hidden sizes: {sorted(widths)}")
+        rank = distinct[0] if distinct else 0
 
-        # Pairwise cosine similarity matrix (using absolute value since
-        # direction sign is arbitrary in SVD)
-        cosine_matrix = (D @ D.T).abs()  # (n, n)
+        # One batched Gram + SVD over all non-zero pairs gives every principal-angle
+        # cosine at once: the mean over angles is the similarity (|cos| for k = 1),
+        # and the 2-norm of the angles is the canonical geodesic distance.
+        cosine_matrix = torch.zeros(n, n, dtype=torch.float64)
+        geodesic_matrix = torch.full(
+            (n, n),
+            _missing_signal_geodesic_step(rank),
+            dtype=torch.float64,
+        )
+        if nonzero:
+            stack = torch.stack([bases[i] for i in nonzero])  # (m, k, d)
+            gram = torch.einsum("ikd,jld->ijkl", stack, stack)
+            cos = torch.linalg.svdvals(gram).clamp(0.0, 1.0)  # (m, m, k)
+            sel = torch.tensor(nonzero)
+            cosine_matrix[sel[:, None], sel[None, :]] = cos.mean(dim=-1)
+            geodesic_matrix[sel[:, None], sel[None, :]] = torch.acos(cos).norm(dim=-1)
+        geodesic_matrix.fill_diagonal_(0.0)
+        cosine_matrix = cosine_matrix.to(torch.float32)
+
+        # Projection distances form a metric even when some layers are zero.
+        distance_matrix = pairwise_projection_distances(bases).to(torch.float32)
 
         # Adjacent layer cosines (for layers in sorted order)
         adjacent_cosines = []
@@ -120,13 +196,14 @@ class CrossLayerAlignmentAnalyzer:
 
         mean_adjacent = sum(adjacent_cosines) / max(len(adjacent_cosines), 1)
 
-        # Angular drift: cumulative angle change from layer to layer
+        # Angular drift: cumulative canonical geodesic distance from layer to layer.
+        # A zero layer is not a Grassmann point. Represent the missing signal by
+        # a sentinel step with every principal angle pi/2, which for single
+        # directions is the historical arccos(0).
         angular_drift = [0.0]
         total_geodesic = 0.0
         for i in range(n - 1):
-            cos_val = cosine_matrix[i, i + 1].clamp(max=1.0).item()
-            angle = torch.acos(torch.tensor(cos_val)).item()
-            total_geodesic += angle
+            total_geodesic += geodesic_matrix[i, i + 1].item()
             angular_drift.append(total_geodesic)
 
         # Direction persistence score:
@@ -151,6 +228,9 @@ class CrossLayerAlignmentAnalyzer:
             mean_adjacent_cosine=mean_adjacent,
             direction_persistence_score=persistence,
             cluster_count=len(clusters),
+            distance_matrix=distance_matrix,
+            subspace_rank=rank,
+            subspace_ranks=ranks,
         )
 
     def _find_clusters(
@@ -205,6 +285,10 @@ class CrossLayerAlignmentAnalyzer:
             return "\n".join(lines)
 
         lines.append(f"Layers analyzed: {result.layer_indices}")
+        if result.subspace_rank > 1:
+            zero_layers = [idx for idx, r in result.subspace_ranks.items() if r == 0]
+            lines.append(f"Subspace rank: {result.subspace_rank} per layer"
+                         + (f" (no signal at layers {zero_layers})" if zero_layers else ""))
         lines.append(f"Direction persistence score: {result.direction_persistence_score:.3f}")
         lines.append("  (1.0 = single direction, 0.0 = all orthogonal)")
         lines.append(f"Mean adjacent-layer cosine: {result.mean_adjacent_cosine:.3f}")

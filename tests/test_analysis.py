@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 
 import pytest
 import torch
@@ -439,6 +440,81 @@ class TestCrossLayerAlignment:
         report = CrossLayerAlignmentAnalyzer.format_report(result)
         assert "Cross-Layer" in report
         assert "persistence" in report
+
+    # -- rank-k subspaces -------------------------------------------------------
+
+    def test_single_direction_results_match_the_historical_cosine_formulas(self):
+        """For single directions every reported number equals the pre-subspace definition."""
+        torch.manual_seed(7)
+        directions = {i: torch.randn(24) for i in range(6)}
+        result = CrossLayerAlignmentAnalyzer(cluster_threshold=0.3).analyze(directions)
+
+        D = torch.stack([d / d.norm() for d in directions.values()])
+        legacy_cos = (D @ D.T).abs()
+        assert torch.allclose(result.cosine_matrix, legacy_cos, atol=1e-5)
+        drift, total = [0.0], 0.0
+        for i in range(5):
+            total += torch.acos(legacy_cos[i, i + 1].clamp(max=1.0)).item()
+            drift.append(total)
+        assert result.angular_drift == pytest.approx(drift, abs=1e-5)
+        assert result.total_geodesic_distance == pytest.approx(total, abs=1e-5)
+        assert result.subspace_rank == 1
+        assert result.subspace_ranks == {i: 1 for i in range(6)}
+        # projection distance between lines is sin(angle)
+        assert result.distance_matrix[0, 1].item() == pytest.approx(
+            torch.sin(torch.acos(legacy_cos[0, 1])).item(), abs=1e-5
+        )
+
+    def test_zero_signal_layers_keep_the_historical_fallback_for_both_shapes(self):
+        """(1, d) and (d,) zero inputs are treated identically: rank 0, zero similarity,
+        a maximal drift step, and a singleton cluster -- never an exception."""
+        analyzer = CrossLayerAlignmentAnalyzer()
+        alone = analyzer.analyze({0: torch.zeros(1, 4)})
+        assert alone.layer_indices == [0] and alone.subspace_ranks == {0: 0}
+
+        e = torch.eye(4)
+        for zero in (torch.zeros(1, 4), torch.zeros(4)):
+            result = analyzer.analyze({0: e[0], 1: zero, 2: e[0]})
+            assert result.subspace_ranks == {0: 1, 1: 0, 2: 1}
+            assert result.cosine_matrix[0, 1].item() == 0.0 and result.cosine_matrix[1, 1].item() == 0.0
+            assert result.cosine_matrix[0, 2].item() == pytest.approx(1.0, abs=1e-6)
+            assert result.angular_drift == pytest.approx([0.0, math.pi / 2, math.pi], abs=1e-6)
+            assert [1] in result.clusters and [0, 2] in result.clusters
+            assert result.distance_matrix[0, 1].item() == pytest.approx(math.sqrt(0.5), abs=1e-6)
+
+    def test_rank_two_subspaces_use_the_canonical_grassmann_geodesic(self):
+        """Two planes with both principal angles pi/3: drift is sqrt(2) * pi/3, the
+        similarity is the mean principal cosine 0.5, and the result is gauge invariant."""
+        e = torch.eye(6)
+        t = math.pi / 3
+        plane_a = torch.stack([e[0], e[1]])
+        plane_b = torch.stack([math.cos(t) * e[0] + math.sin(t) * e[2], math.cos(t) * e[1] + math.sin(t) * e[3]])
+        analyzer = CrossLayerAlignmentAnalyzer(cluster_threshold=0.85)
+
+        result = analyzer.analyze({3: plane_a, 7: plane_b})
+        assert result.subspace_rank == 2
+        assert result.total_geodesic_distance == pytest.approx(math.sqrt(2) * t, abs=1e-6)
+        assert result.cosine_matrix[0, 1].item() == pytest.approx(0.5, abs=1e-6)
+        assert result.distance_matrix[0, 1].item() == pytest.approx(math.sqrt(2) * math.sin(t), abs=1e-6)
+        assert result.clusters == [[3], [7]]
+
+        rotation = torch.tensor([[0.6, 0.8], [-0.8, 0.6]])
+        regauged = analyzer.analyze({3: rotation @ plane_a, 7: 2.5 * plane_b.flip(0)})
+        assert torch.allclose(regauged.cosine_matrix, result.cosine_matrix, atol=1e-6)
+        assert regauged.total_geodesic_distance == pytest.approx(result.total_geodesic_distance, abs=1e-6)
+
+        identical = analyzer.analyze({0: plane_a, 1: rotation @ plane_a, 2: plane_a})
+        assert identical.clusters == [[0, 1, 2]]
+        assert identical.total_geodesic_distance == pytest.approx(0.0, abs=1e-6)
+
+    def test_dependent_rows_are_dropped_and_mixed_ranks_are_rejected(self):
+        e = torch.eye(5)
+        analyzer = CrossLayerAlignmentAnalyzer()
+        collapsed = analyzer.analyze({0: torch.stack([e[0], e[0]]), 1: e[0]})
+        assert collapsed.subspace_rank == 1 and collapsed.cosine_matrix[0, 1].item() == pytest.approx(1.0, abs=1e-6)
+
+        with pytest.raises(ValueError, match="uniform rank"):
+            analyzer.analyze({0: e[0], 1: torch.stack([e[0], e[1]])})
 
 
 # ---------------------------------------------------------------------------
