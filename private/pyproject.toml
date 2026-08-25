@@ -2,7 +2,7 @@
 members = ["secret_manager", "lab_bench"]
 
 [tool.pytest.ini_options]
-addopts = ["--strict-config", "--strict-markers", "-ra"]
+addopts = ["--strict-config", "--strict-markers", "-ra", "-p", "no:cacheprovider"]
 pythonpath = ["secret_manager/src", "lab_bench/src", ".."]
 testpaths = ["secret_manager/tests", "lab_bench/tests"]
 

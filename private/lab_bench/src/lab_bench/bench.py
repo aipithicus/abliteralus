@@ -70,6 +70,9 @@ class LabBench:
         surgery_arguments = _arguments(arguments, "local-surgery requires a surgery command")
         command = self._repository_python("abliteralus.surgery_bench", surgery_arguments)
         # Postprocessing, smoke tests, and explicitly offline runs do not need Hub access.
+        # This conservative literal check can withhold Hub credentials if
+        # ``--offline`` appears as another option's value. That safe-direction
+        # false positive is preferable to injecting a token into an offline run.
         needs_hub = surgery_arguments[0] == "run" and "--offline" not in surgery_arguments
         if needs_hub:
             return self.manager.run(

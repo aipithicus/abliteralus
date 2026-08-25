@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from secret_manager.errors import SecretUnavailable
+
 from secret_manager import broker, cli
 
 CONFIG_TEXT = """\
@@ -64,6 +66,26 @@ def test_broker_success_writes_only_value(monkeypatch, capsysbinary) -> None:
     captured = capsysbinary.readouterr()
     assert captured.out == b"secret-value"
     assert captured.err == b""
+
+
+def test_broker_wrong_argument_count_is_a_hard_failure() -> None:
+    assert broker.main([]) == 1
+    assert broker.main(["HF_TOKEN", "EXTRA"]) == 1
+
+
+def test_broker_unavailable_credential_uses_contract_exit_code(monkeypatch) -> None:
+    class FakeManager:
+        def resolve_for_broker(self, name, *, profile_name=None):
+            raise SecretUnavailable(name)
+
+    class Factory:
+        @staticmethod
+        def from_config():
+            return FakeManager()
+
+    monkeypatch.setattr(broker, "SecretManager", Factory)
+
+    assert broker.main(["HF_TOKEN"]) == 2
 
 
 def test_privileged_flags_parse_after_profile_before_child_boundary() -> None:

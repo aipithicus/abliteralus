@@ -18,6 +18,8 @@ from .config import (
 from .errors import ConfigError, PrivilegedSecretError, ProviderError, SecretUnavailable
 from .proton_pass import build_reference, resolve_reference, run_with_references
 
+_CHECK_TIMEOUT_FLOOR_SECONDS = 15.0
+
 
 class SecretManager:
     """Resolve references at process boundaries without retaining secret values."""
@@ -137,7 +139,10 @@ class SecretManager:
             [sys.executable, "-m", "secret_manager._probe", *names],
             environment=environment,
             capture_output=True,
-            timeout=provider.timeout_seconds,
+            # The probe starts a Python interpreter under the provider wrapper.
+            # Give cold Windows process and antivirus startup more headroom than
+            # a single-field provider lookup while respecting larger settings.
+            timeout=max(provider.timeout_seconds, _CHECK_TIMEOUT_FLOOR_SECONDS),
         )
         if completed.returncode != 0:
             raise ProviderError(f"secret profile check failed: {profile_name}")

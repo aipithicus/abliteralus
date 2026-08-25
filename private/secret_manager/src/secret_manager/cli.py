@@ -156,7 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except KeyboardInterrupt:
         return 130
-    return 1
+    raise AssertionError("unreachable command dispatch")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -33,7 +33,9 @@ secret-manager --config secrets.local.toml run local-surgery -- python worker.py
 
 `inventory` shows aliases and environment-variable names, not values. References are
 also hidden unless `--show-references` is explicitly requested. `check` runs an
-ephemeral child that emits booleans only.
+ephemeral child that emits booleans only. The check path allows at least 15 seconds
+for cold provider-wrapper and Python startup; a larger configured provider timeout
+is preserved.
 
 Privileged profiles require `--allow-privileged` and a typed confirmation. Automation
 must additionally pass `--yes`. Broker-enabled profiles can never address privileged
@@ -49,7 +51,7 @@ secret-manager --config secrets.local.toml run hf-admin \
 The `secret-broker` entry point implements the executable contract expected by
 `OBLITERATUS_SECRET_COMMAND`: exactly one normalized environment-variable argument,
 only the value on stdout, exit 2 when unavailable, and a generic nonzero failure for
-provider/configuration errors. Provider stderr is discarded.
+malformed invocation or provider/configuration errors. Provider stderr is discarded.
 
 Set these non-secret deployment values before starting OBLITERATUS:
 

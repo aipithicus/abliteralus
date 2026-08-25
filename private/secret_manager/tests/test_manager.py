@@ -62,6 +62,7 @@ def test_check_returns_boolean_metadata_only(
     def fake_run(arguments, **kwargs):
         assert sentinel not in repr(arguments)
         assert sentinel not in repr(kwargs)
+        assert kwargs["timeout"] == 15.0
         return subprocess.CompletedProcess(
             arguments,
             0,

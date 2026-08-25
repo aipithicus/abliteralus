@@ -14,7 +14,9 @@ from .manager import SecretManager
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if len(arguments) != 1:
-        return 2
+        # OBLITERATUS reserves 2 for an unavailable credential. A malformed
+        # direct invocation is a hard broker failure, not an unavailable result.
+        return 1
     try:
         manager = SecretManager.from_config()
         profile = os.environ.get(PROFILE_ENVIRONMENT_VARIABLE, "").strip() or None
