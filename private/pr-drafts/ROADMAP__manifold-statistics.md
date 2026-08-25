@@ -172,3 +172,15 @@ Corpus: `D:/aghado01/graveyard/codex-scientiae/bibliotecha/corpora/KisungYou`
 | Intrinsic effective sample size for manifold-valued MCMC via kernel discrepancy | `2605.03266v1.md` | R8 — coordinate-free ESS; lag-window estimator under absolute regularity; geodesic Gaussian kernels are not generally PD on curved spaces |
 | PCA, SVD, and Centering of Data | `2307.15213v2.md` | R1 — centering choice interacts with the location estimator |
 | Data transforming augmentation for heteroscedastic models | `1911.02748v2.md` | Background — the early sampling work (MCMC/DA, Gibbs and EM acceleration); relevant to estimator convergence, not to inference here |
+
+### Background briefs
+
+Deeper discussion lives in the sibling issues vault at
+`D:/aipithicus/aipithicus-issues/thermomapper/briefs/`:
+
+| Brief | Bears on |
+|---|---|
+| `weiszfeld-scatter-vs-sandwich-covariance.md` | R1, R2, R8 — what the scatter estimates vs what the sandwich estimates; the breakdown-point correction; the metric hierarchy |
+| `scale-selection-degeneracy.md` | R7 — why `α` cannot be fit by joint minimization, and the three sanctioned alternatives |
+| `intrinsic-ess-for-spc.md` | R8 — the ESS construction, and the positive-definiteness trap for geodesic kernels |
+| `dta-adaptive-homogenization-spc.md` | ThermoMapper-side; background on data-side vs metric-side homogenization |
