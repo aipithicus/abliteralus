@@ -70,14 +70,14 @@ inference last.
 
 | # | Branch | Base | Depends on | Scope |
 |---|---|---|---|---|
-| R1 | `feat/robust-activation-location` | upstream main | none | Weiszfeld/IRLS geometric median in `R^d`, opt-in, replacing the mean at the prompt-reduction site |
-| R2 | `feat/prompt-anomaly-scatter` | R1 | R1 | Weiszfeld tangent scatter + regularized Mahalanobis distance per prompt; flags anomalous prompts as a diagnostic |
+| R1 | `feat/robust-activation-location` | upstream main | none | Scale-calibrated **median-of-means** over prompt blocks replacing the arithmetic mean at the prompt-reduction site; the Weiszfeld/IRLS geometric median is the `K = n` limit. Opt-in |
+| R2 | `feat/prompt-anomaly-scatter` | R1 | R1 | Leave-one-prompt-out jackknife influence plus Weiszfeld tangent scatter and regularized Mahalanobis distance; flags anomalous prompts. Jackknife influence alone already answers "which prompts drive this direction" without needing a `d x d` scatter |
 | R3 | `feat/cross-layer-subspace-pipeline` | `feat/grassmann-cross-layer` | cross-layer PR + whitened-SVD fix | Feed `refusal_subspaces` (rank-k) into cross-layer analysis instead of `quick_directions` (rank-1); contract test against silent rank-1 fallback |
 | R4 | `feat/grassmann-consensus` | `feat/grassmann-statistics` | R3 + statistics PR | Replace `argmax norm` cluster representative with a Karcher-mean consensus subspace |
 | R5 | `feat/grassmann-median` | R4 | R4 | Geometric median on `Gr(k,d)`; robust consensus where a cluster holds an anomalous layer |
 | R6 | `feat/manifold-protocol` | R5 | R5 | Extract a manifold protocol (`log`/`exp`/`dist`) so estimators stop being Grassmann-specific |
-| R7 | `feat/product-manifold` | R6 | R6 | `R^p × Gr(k,d)` with scaled metric `H_α`; the MoMPCA structure |
-| R8 | `feat/subspace-uncertainty` | R7 | R4 (bootstrap) / R7 (sandwich) | Stability ordering for consensus subspaces first; calibrated confidence region only behind a coverage check |
+| R7 | `feat/product-manifold` | R6 | R6 | `R^p × Gr(k,d)` with scaled metric `H_α`; the MoMPCA structure. **`α` must not be fit by naive joint minimization** — that is provably degenerate (see caveats) |
+| R8 | `feat/subspace-uncertainty` | R4 | R4 | **Node bootstrap as the primary route** — its validity is proven in the MoMPCA paper, so this needs citing rather than justifying. Intrinsic effective-sample-size diagnostic alongside. Sandwich covariance is a secondary refinement needing R7 |
 
 **R1 and R2 are independent of the entire Grassmann stack.** They can be submitted
 alongside the metrics PR rather than queued behind it, which is what makes this
@@ -96,13 +96,17 @@ until it exists, that PR stays deferred as its draft says.
   lags. The layer sequence is smooth and locally correlated, which is the friendliest
   case for that repair, and the clusters this codebase already computes are natural
   dependence blocks.
-  What actually bites is small `n`: HAC autocovariance estimates are themselves noisy,
-  and with ~32–80 layers under strong adjacent correlation the *effective* `n` may be
-  an order of magnitude below the nominal count. That is a measurable quantity, not an
-  assumption to argue about — and ABLITERALUS already computes its inputs, since
-  `mean_adjacent_cosine` and `direction_persistence_score` on `CrossLayerResult` are
-  exactly what an effective-sample-size estimate consumes. Compute it, and let the
-  number gate the claim.
+  Small `n` is the sharper worry — HAC autocovariance estimates are themselves noisy —
+  but the literature already answers it, and more cleanly than HAC does. You's own
+  work supplies both halves: the MoMPCA paper proves **fixed-node** (small-`n`)
+  non-Gaussian limits and **finite-sample high-probability** median-of-means bounds, so
+  validity does not hinge on a large-`n` asymptotic at all; and the intrinsic-ESS paper
+  gives a coordinate-free effective-sample-size diagnostic whose lag-window estimator is
+  consistent under **absolute regularity** — a mixing condition, not independence.
+  So the assumption actually being stretched is "Markov chain" to "dependent sequence,"
+  which is a far milder stretch than i.i.d., and it is one the estimator family is
+  already built to absorb. Compute the ESS, report it next to any interval, and prefer
+  resampling over HAC wherever both are available.
 
 - **Separate relative use from absolute use.** Ranking layers or clusters by stability
   survives a miscalibrated variance; quoting a 95% region does not. Under positively
@@ -130,3 +134,41 @@ until it exists, that PR stays deferred as its draft says.
   R1 is easy to demonstrate (perturb a few prompts, show the direction moves under
   mean and not under median). R5–R8 need a measured effect on excision quality or
   they are unshippable regardless of correctness.
+
+## Sampling-based routes
+
+Resampling is not an add-on here; it is what the source papers actually do.
+
+- **Median-of-means is itself a partitioning scheme.** Split the sample into `K`
+  blocks, take a mean per block, take the geometric median of the block means. It
+  buys sub-Gaussian concentration under finite variance and tolerates a fraction of
+  corrupted blocks, and it is what the MoMPCA paper builds on. This is why R1 is
+  specified as MoM rather than a plain geometric median: same code path, strictly
+  better guarantees, and blocks are where dependence gets absorbed.
+
+- **Node bootstrap has proven validity** in the MoMPCA paper. R8 therefore cites
+  rather than argues, which is the difference between a shippable PR and a research
+  claim an upstream reviewer has to referee.
+
+- **Jackknife is the cheapest useful thing on the list.** Leave-one-prompt-out at the
+  reduction site directly answers "which prompts move this direction," at `n` refits
+  of an estimator that is already cheap. It needs no scatter matrix, no manifold, and
+  no asymptotics — which is why R2 leads with it. A block (delete-`d`) jackknife over
+  contiguous layer ranges is the analogous move on the layer axis and respects the
+  sequence structure that makes plain resampling awkward there.
+
+- **Permutation tests answer a different question** — whether the cluster structure is
+  real at all — and are worth keeping distinct from uncertainty about a given subspace.
+
+## References
+
+Corpus: `D:/aghado01/graveyard/codex-scientiae/bibliotecha/corpora/KisungYou`
+
+| Paper | File | Bears on |
+|---|---|---|
+| Scale-Calibrated Median-of-Means for Robust Distributed PCA | `2605.20681v1.md` | R1, R7, R8 — MoM estimator, node-bootstrap validity, fixed-node limits, bad-node influence |
+| Geometric medians on product manifolds | `2505.18844v3.md` | R5, R7 — the base product-median construction |
+| Scale selection for geometric medians on product manifolds | `2605.08001v1.md` | R7 — `α` identifiability; naive joint minimization is degenerate |
+| Intrinsic effective sample size for manifold-valued MCMC via kernel discrepancy | `2605.03266v1.md` | R8 — coordinate-free ESS; lag-window estimator under absolute regularity; geodesic Gaussian kernels are not generally PD on curved spaces |
+| PCA, SVD, and Centering of Data | `2307.15213v2.md` | R1 — centering choice interacts with the location estimator |
+| Data transforming augmentation for heteroscedastic models | `1911.02748v2.md` | Background — the early sampling work (MCMC/DA, Gibbs and EM acceleration); relevant to estimator convergence, not to inference here |
