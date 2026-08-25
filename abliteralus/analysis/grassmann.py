@@ -12,7 +12,9 @@ Conventions
     A subspace is a ``(k, d)`` tensor with orthonormal rows, matching the
     ``directions`` tensors used by the surgery code. All computations run on CPU
     float64 copies (these are diagnostics over a handful of vectors, and MPS has
-    no float64); angles and distances are returned as CPU float64 tensors.
+    no float64); angles and distances are returned as CPU float64 tensors, and
+    subspaces produced by :func:`exp_map` / :func:`karcher_mean` are returned on
+    the device and dtype of the input they were derived from.
 
 Two notions of "distance" are provided, and they must not be mixed:
 
@@ -31,7 +33,9 @@ Numerical notes
     ``Y`` projected onto the complement of ``Z``) through ``atan2``, so angles near
     zero are not lost to ``acos`` round-off. Bases are made orthonormal by an
     SVD with a relative tolerance, which is rank revealing regardless of row
-    order; an unpivoted QR is not.
+    order; an unpivoted QR is not. The log map is unique for principal angles
+    below pi/2; at the cut locus one valid minimizing geodesic is returned, so
+    :func:`karcher_mean` is intended for clustered inputs.
 
 References
     - Edelman, Arias & Smith (1998): The Geometry of Algorithms with Orthogonality
@@ -56,6 +60,9 @@ __all__ = [
     "geodesic_distance",
     "projection_distance",
     "mean_principal_cosine",
+    "log_map",
+    "exp_map",
+    "karcher_mean",
     "pairwise_geodesic_distances",
     "pairwise_projection_distances",
     "max_geodesic_distance",
@@ -78,6 +85,12 @@ def _as_rows(t: torch.Tensor) -> torch.Tensor:
     if not torch.isfinite(work).all():
         raise ValueError("subspace contains non-finite values")
     return work
+
+
+def _like(result: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
+    """Return ``result`` on the device/dtype of ``reference`` (float32 for non-float references)."""
+    dtype = reference.dtype if reference.is_floating_point() else torch.float32
+    return result.to(device=reference.device, dtype=dtype)
 
 
 def orthonormal_basis(basis: torch.Tensor, rel_tol: float = 1e-6) -> torch.Tensor:
@@ -184,6 +197,69 @@ def mean_principal_cosine(y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
     if theta.numel() == 0:
         return torch.zeros((), dtype=_DTYPE)
     return torch.cos(theta).mean()
+
+
+def log_map(y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+    """Riemannian logarithm ``log_Y(Z)`` as a ``(k, d)`` horizontal tangent at ``y``.
+
+    With ``M = Y^T Z = U1 cos(Theta) V1^T`` (column convention) the tangent is
+    ``U2 Theta U1^T``, ``u_i = (Z v_i - cos(theta_i) Y u_i) / sin(theta_i)``. Equal
+    ranks required. ``||log_Y(Z)||_F == geodesic_distance(y, z)``. Returned on the
+    device/dtype of ``y``.
+    """
+    y64, z64 = _check_orthonormal(y, "y"), _check_orthonormal(z, "z")
+    if y64.shape != z64.shape:
+        raise ValueError(f"log_map requires equal shapes, got {tuple(y64.shape)} and {tuple(z64.shape)}")
+    yc, zc = y64.T, z64.T
+    u1, cos, v1t = torch.linalg.svd(yc.T @ zc)
+    cos = cos.clamp(-1.0, 1.0)
+    theta = torch.acos(cos)
+    sin = torch.sin(theta)
+    zv, yu = zc @ v1t.T, yc @ u1
+    u2 = torch.zeros_like(yu)
+    nonzero = sin > 1e-12
+    u2[:, nonzero] = (zv[:, nonzero] - yu[:, nonzero] * cos[nonzero]) / sin[nonzero]
+    return _like((u2 @ torch.diag(theta) @ u1.T).T, y)
+
+
+def exp_map(y: torch.Tensor, tangent: torch.Tensor) -> torch.Tensor:
+    """Riemannian exponential ``exp_Y(Delta)``; ``Delta = U S V^T`` gives ``(Y V cos S + U sin S) V^T``.
+
+    Re-orthonormalized. Returned on the device/dtype of ``y``.
+    """
+    y64, d64 = _check_orthonormal(y, "y"), _as_rows(tangent)
+    if y64.shape != d64.shape:
+        raise ValueError(f"exp_map requires equal shapes, got {tuple(y64.shape)} and {tuple(d64.shape)}")
+    yc, dc = y64.T, d64.T
+    u, s, vt = torch.linalg.svd(dc, full_matrices=False)
+    out = yc @ vt.T @ torch.diag(torch.cos(s)) @ vt + u @ torch.diag(torch.sin(s)) @ vt
+    q, _ = torch.linalg.qr(out)
+    return _like(q.T, y)
+
+
+def karcher_mean(subspaces: list[torch.Tensor], max_iters: int = 100, tol: float = 1e-10) -> torch.Tensor:
+    """Frechet (Karcher) mean on Gr(k, d) by tangent-space averaging.
+
+    Iterates ``Y <- exp_Y(mean_i log_Y(Z_i))`` from the first input until the mean
+    tangent is below ``tol`` or ``max_iters`` is reached. Gauge and permutation
+    invariant. All inputs must share ``(k, d)`` and have orthonormal rows; intended
+    for clustered inputs (see the module notes on the cut locus). Returned on the
+    device/dtype of the first input.
+    """
+    if not subspaces:
+        raise ValueError("karcher_mean requires at least one subspace")
+    bases = [_check_orthonormal(s, f"subspaces[{i}]") for i, s in enumerate(subspaces)]
+    shape = bases[0].shape
+    for b in bases:
+        if b.shape != shape:
+            raise ValueError("karcher_mean requires subspaces of identical shape")
+    y = bases[0].clone()
+    for _ in range(max_iters):
+        mean_tangent = torch.stack([_as_rows(log_map(y, z)) for z in bases]).mean(dim=0)
+        if mean_tangent.norm() < tol:
+            break
+        y = _as_rows(exp_map(y, mean_tangent))
+    return _like(y, subspaces[0])
 
 
 def _stack_uniform(subspaces: list[torch.Tensor]) -> torch.Tensor:

@@ -17,7 +17,10 @@ import pytest
 import torch
 
 from abliteralus.analysis.grassmann import (
+    exp_map,
     geodesic_distance,
+    karcher_mean,
+    log_map,
     max_geodesic_distance,
     mean_principal_cosine,
     orthonormal_basis,
@@ -159,6 +162,42 @@ def test_non_orthonormal_input_is_rejected():
 
 
 # ---------------------------------------------------------------------------
+# Manifold maps and the Karcher mean
+# ---------------------------------------------------------------------------
+
+
+def test_log_exp_invariants():
+    generator = torch.Generator().manual_seed(5)
+    y, z = _random_subspace(3, 16, generator), _random_subspace(3, 16, generator)
+
+    tangent = log_map(y, z)
+    assert tangent.norm().item() == pytest.approx(geodesic_distance(y, z).item(), abs=1e-10)
+    assert torch.allclose(y @ tangent.T, torch.zeros(3, 3, dtype=torch.float64), atol=1e-10)  # horizontal
+    assert geodesic_distance(exp_map(y, tangent), z).item() == pytest.approx(0.0, abs=1e-8)
+
+
+def test_karcher_mean_fixed_point_midpoint_gauge_and_permutation():
+    generator = torch.Generator().manual_seed(7)
+    y, z = _random_subspace(2, 10, generator), _random_subspace(2, 10, generator)
+    q, _ = torch.linalg.qr(torch.randn(2, 2, dtype=torch.float64, generator=generator))
+
+    assert geodesic_distance(karcher_mean([y]), y).item() == pytest.approx(0.0, abs=1e-10)
+    midpoint = exp_map(y, 0.5 * log_map(y, z))
+    assert geodesic_distance(karcher_mean([y, z]), midpoint).item() == pytest.approx(0.0, abs=1e-6)
+    assert geodesic_distance(karcher_mean([q @ y, z]), karcher_mean([z, y])).item() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_karcher_mean_of_perturbations_stays_near_the_centre():
+    generator = torch.Generator().manual_seed(11)
+    centre = _random_subspace(3, 20, generator)
+    cloud = []
+    for _ in range(8):
+        direction = log_map(centre, _random_subspace(3, 20, generator))
+        cloud.append(exp_map(centre, 0.2 * direction / direction.norm()))
+    assert geodesic_distance(karcher_mean(cloud), centre).item() < 0.2
+
+
+# ---------------------------------------------------------------------------
 # Batched pairwise distances
 # ---------------------------------------------------------------------------
 
@@ -219,3 +258,27 @@ def test_random_low_precision_subspaces_are_accepted(device, dtype):
     y = _random_subspace(3, 16, generator).to(device=device, dtype=dtype)
 
     assert principal_angles(y, y).norm().item() == pytest.approx(0.0, abs=1e-10)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_mapped_subspaces_return_on_the_input_device(device, dtype):
+    y = orthonormal_basis(torch.stack([E[0], E[1]])).to(device=device, dtype=dtype)
+    z = orthonormal_basis(torch.stack([E[0], E[2]])).to(device=device, dtype=dtype)
+
+    mapped = exp_map(y, log_map(y, z))
+    assert mapped.device.type == device and mapped.dtype == dtype
+    assert y.device.type == device and y.dtype == dtype  # inputs untouched
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_low_precision_exp_outputs_are_reusable(device, dtype):
+    generator = torch.Generator().manual_seed(17)
+    y = _random_subspace(3, 16, generator).to(device=device, dtype=dtype)
+    z = _random_subspace(3, 16, generator).to(device=device, dtype=dtype)
+
+    mapped = exp_map(y, log_map(y, z))
+    assert mapped.device.type == device and mapped.dtype == dtype
+    assert principal_angles(mapped, mapped).norm().item() == pytest.approx(0.0, abs=1e-10)
+    assert geodesic_distance(mapped, z).item() < 0.05
