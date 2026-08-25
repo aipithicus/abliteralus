@@ -108,6 +108,7 @@ def test_lightning_plan_adds_defaults_without_credentials(
     ]
     assert command.count("--forward-env") == 1
     assert command[command.index("--forward-env") + 1] == "HF_TOKEN"
+    assert command[command.index("--remote-root") + 1] == ".abliteralus"
 
 
 def test_lightning_run_uses_surgery_profile_and_preserves_overrides(configured_bench) -> None:
@@ -145,6 +146,68 @@ def test_studio_control_and_inference_use_distinct_profiles(configured_bench) ->
     remote = manager.calls[1]["command"][manager.calls[1]["command"].index("--remote-command") + 1]
     assert remote == "python server.py"
     assert manager.calls[1]["command"].count("--forward-env") == 1
+
+
+def test_studio_provision_uses_control_profile_without_forwarding_hub_token(
+    configured_bench,
+) -> None:
+    bench, manager = configured_bench
+
+    assert (
+        bench.studio_provision(
+            experiment_config="experiments/surgery/lightning-qwen25-7b.yaml",
+            max_runtime=3600,
+        )
+        == 7
+    )
+    call = manager.calls[0]
+    command = call["command"]
+
+    assert call["profile"] == "lightning-control"
+    assert command[2:4] == ["abliteralus.lightning_surgery", "provision"]
+    assert command[command.index("--machine") + 1] == "CPU-4"
+    assert command[command.index("--max-runtime") + 1] == "3600"
+    assert command[command.index("--remote-root") + 1] == ".abliteralus"
+    assert "--forward-env" not in command
+    assert "HF_TOKEN" not in command
+
+
+def test_studio_doctor_uses_control_profile_without_forwarding_secrets(
+    configured_bench,
+) -> None:
+    bench, manager = configured_bench
+
+    assert (
+        bench.studio_doctor(experiment_config="experiments/surgery/lightning-qwen25-7b.yaml") == 7
+    )
+    call = manager.calls[0]
+
+    assert call["profile"] == "lightning-control"
+    assert call["command"][2:4] == ["abliteralus.lightning_surgery", "doctor"]
+    assert "--forward-env" not in call["command"]
+
+
+def test_studio_provision_dry_run_does_not_load_secret_manager(
+    configured_bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench, manager = configured_bench
+    observed: dict = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = list(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("lab_bench.bench.subprocess.run", fake_run)
+
+    assert (
+        bench.studio_provision(
+            experiment_config="experiments/surgery/lightning-qwen25-7b.yaml",
+            dry_run=True,
+        )
+        == 0
+    )
+    assert not manager.calls
+    assert "--dry-run" in observed["command"]
 
 
 def test_placeholder_teamspace_fails_before_secret_or_api_access() -> None:

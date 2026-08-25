@@ -51,6 +51,7 @@ class LabBench:
                 "control_machine": self.config.lightning.control_machine,
                 "surgery_machine": self.config.lightning.surgery_machine,
                 "inference_machine": self.config.lightning.inference_machine,
+                "remote_root": self.config.lightning.remote_root,
                 "forward_environment": list(self.config.lightning.forward_environment),
             },
             "ssh": {
@@ -93,27 +94,82 @@ class LabBench:
     def lightning_surgery(self, arguments: Sequence[str]) -> int:
         self._require_lightning_target()
         surgery_arguments = _arguments(
-            arguments, "lightning-surgery requires plan or run arguments"
+            arguments, "lightning-surgery requires an operation and arguments"
         )
         operation = surgery_arguments[0]
-        if operation not in {"plan", "run"}:
-            raise LabBenchError("lightning-surgery begins with plan or run")
+        if operation not in {"plan", "run", "provision", "doctor"}:
+            raise LabBenchError("lightning-surgery begins with plan, run, provision, or doctor")
         expanded = list(surgery_arguments)
         _append_default(expanded, "--teamspace", self.config.lightning.teamspace)
         _append_default(expanded, "--studio", self.config.lightning.studio)
-        _append_default(expanded, "--machine", self.config.lightning.surgery_machine)
-        forwarded = set(_option_values(expanded, "--forward-env"))
-        for name in self.config.lightning.forward_environment:
-            if name not in forwarded:
-                expanded.extend(["--forward-env", name])
+        _append_default(expanded, "--remote-root", self.config.lightning.remote_root)
+        if operation in {"plan", "run"}:
+            _append_default(expanded, "--machine", self.config.lightning.surgery_machine)
+            forwarded = set(_option_values(expanded, "--forward-env"))
+            for name in self.config.lightning.forward_environment:
+                if name not in forwarded:
+                    expanded.extend(["--forward-env", name])
+        elif operation == "provision":
+            _append_default(expanded, "--machine", self.config.lightning.control_machine)
         command = self._repository_python("abliteralus.lightning_surgery", expanded)
-        if operation == "plan":
+        if operation == "plan" or (operation == "provision" and "--dry-run" in expanded):
             return self._direct(command)
+        profile = (
+            self.config.profiles.lightning_surgery
+            if operation == "run"
+            else self.config.profiles.lightning_control
+        )
         return self.manager.run(
-            self.config.profiles.lightning_surgery,
+            profile,
             command,
             cwd=self.config.repository,
         ).returncode
+
+    def studio_provision(
+        self,
+        *,
+        experiment_config: str | Path,
+        machine: str | None = None,
+        interruptible: bool = False,
+        max_runtime: int | None = None,
+        skip_gguf: bool = False,
+        local_output: str | Path | None = None,
+        keep_running: bool = False,
+        reuse_running: bool = False,
+        dry_run: bool = False,
+    ) -> int:
+        arguments = ["provision", "--config", str(experiment_config)]
+        if machine is not None:
+            arguments.extend(["--machine", machine])
+        if interruptible:
+            arguments.append("--interruptible")
+        if max_runtime is not None:
+            arguments.extend(["--max-runtime", str(max_runtime)])
+        if skip_gguf:
+            arguments.append("--skip-gguf")
+        if local_output is not None:
+            arguments.extend(["--local-output", str(local_output)])
+        if keep_running:
+            arguments.append("--keep-running")
+        if reuse_running:
+            arguments.append("--reuse-running")
+        if dry_run:
+            arguments.append("--dry-run")
+        return self.lightning_surgery(arguments)
+
+    def studio_doctor(
+        self,
+        *,
+        experiment_config: str | Path,
+        skip_gguf: bool = False,
+        local_output: str | Path | None = None,
+    ) -> int:
+        arguments = ["doctor", "--config", str(experiment_config)]
+        if skip_gguf:
+            arguments.append("--skip-gguf")
+        if local_output is not None:
+            arguments.extend(["--local-output", str(local_output)])
+        return self.lightning_surgery(arguments)
 
     def studio_status(self) -> int:
         return self._studio_control("control", ["status"])

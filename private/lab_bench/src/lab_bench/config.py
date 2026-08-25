@@ -6,7 +6,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from .errors import LabBenchError
@@ -16,6 +16,7 @@ _PROFILE_ALIAS = re.compile(r"^[a-z][a-z0-9_-]*$")
 _MACHINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _TEAMSPACE = re.compile(r"^[^/\s]+/[^/\s]+$")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_REMOTE_PATH_SEGMENT = re.compile(r"^\.?[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class LightningDefaults:
     control_machine: str
     surgery_machine: str
     inference_machine: str
+    remote_root: str
     forward_environment: tuple[str, ...]
 
 
@@ -143,6 +145,7 @@ def _parse_lightning(table: Mapping[str, Any]) -> LightningDefaults:
         "control_machine",
         "surgery_machine",
         "inference_machine",
+        "remote_root",
         "forward_environment",
     }
     _unknown(table, keys, "lightning")
@@ -157,6 +160,15 @@ def _parse_lightning(table: Mapping[str, Any]) -> LightningDefaults:
     for key, value in machines.items():
         if _MACHINE.fullmatch(value) is None:
             raise LabBenchError(f"lightning.{key} contains unsupported characters")
+    remote_root = _optional_string(table, "remote_root", ".abliteralus", "lightning")
+    remote_path = PurePosixPath(remote_root)
+    if (
+        not remote_root
+        or remote_path.is_absolute()
+        or ".." in remote_path.parts
+        or any(_REMOTE_PATH_SEGMENT.fullmatch(part) is None for part in remote_path.parts)
+    ):
+        raise LabBenchError("lightning.remote_root must be a relative POSIX path without '..'")
     forward = table.get("forward_environment", [])
     if not isinstance(forward, list) or not all(isinstance(name, str) for name in forward):
         raise LabBenchError("lightning.forward_environment must be an array of names")
@@ -172,6 +184,7 @@ def _parse_lightning(table: Mapping[str, Any]) -> LightningDefaults:
         control_machine=machines["control_machine"],
         surgery_machine=machines["surgery_machine"],
         inference_machine=machines["inference_machine"],
+        remote_root=str(remote_path),
         forward_environment=tuple(forward),
     )
 

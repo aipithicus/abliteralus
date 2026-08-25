@@ -16,6 +16,7 @@ studio = "abliteralus-lab"
 control_machine = "CPU-4"
 surgery_machine = "L40S"
 inference_machine = "L40S"
+remote_root = ".abliteralus"
 forward_environment = ["HF_TOKEN"]
 
 [ssh]

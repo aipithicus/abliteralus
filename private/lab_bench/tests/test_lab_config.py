@@ -45,6 +45,7 @@ def test_config_resolves_paths_and_machine_purposes() -> None:
     assert config.repository == repository.resolve()
     assert config.python == Path(sys.executable).resolve()
     assert config.lightning.control_machine == "CPU-4"
+    assert config.lightning.remote_root == ".abliteralus"
     assert config.lightning.forward_environment == ("HF_TOKEN",)
 
 
@@ -69,4 +70,12 @@ def test_ssh_destination_cannot_be_an_option() -> None:
     raw["ssh"]["destination"] = "-oProxyCommand=untrusted"
 
     with pytest.raises(LabBenchError, match="option prefix"):
+        parse_config(raw)
+
+
+def test_remote_root_rejects_parent_traversal() -> None:
+    raw = sample_mapping(Path.cwd())
+    raw["lightning"]["remote_root"] = "../shared"
+
+    with pytest.raises(LabBenchError, match="relative POSIX path"):
         parse_config(raw)

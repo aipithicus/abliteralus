@@ -15,8 +15,12 @@ from abliteralus.lightning_surgery import (
     LightningConfigError,
     _runtime_paths,
     build_lightning_plan,
+    build_provision_plan,
+    build_runtime_layout,
     build_runtime_bundle,
     execute_lightning_plan,
+    execute_provision_plan,
+    execute_runtime_doctor,
 )
 from abliteralus.surgery_bench import load_experiment_spec
 
@@ -118,8 +122,49 @@ def test_plan_is_shell_safe_and_contains_no_forwarded_secret_value(tmp_path, mon
     encoded = json.dumps(plan.to_dict())
     assert "super-secret-token" not in encoded
     assert plan.forwarded_environment == ("HF_TOKEN",)
-    assert "uv sync --frozen --no-dev" in plan.command
+    assert "uv sync" not in plan.command
+    assert "pip install" not in plan.command
+    assert plan.runtime.key in plan.command
+    assert plan.runtime.uv_version == "0.12.4"
     assert "private" not in plan.command
+
+
+def test_runtime_identity_is_lock_addressed_and_uses_persistent_caches(tmp_path):
+    repo = _minimal_repo(tmp_path)
+    spec = _spec(tmp_path)
+
+    first = build_runtime_layout(repo, spec)
+    (repo / "uv.lock").write_text("version = 2\n", encoding="utf-8")
+    second = build_runtime_layout(repo, spec)
+
+    assert first.key != second.key
+    assert first.environment == f".abliteralus/runtimes/{first.key}"
+    assert first.uv_cache == ".abliteralus/cache/uv"
+    assert first.hf_home == ".abliteralus/cache/huggingface"
+
+
+def test_provision_plan_owns_install_and_sync_work(tmp_path):
+    repo = _minimal_repo(tmp_path)
+    spec = _spec(tmp_path)
+
+    plan = build_provision_plan(
+        spec,
+        repo_root=repo,
+        teamspace="owner/research",
+        studio="studio",
+        machine="CPU-4",
+        max_runtime=3600,
+    )
+
+    assert "uv==0.12.4" in plan.command
+    assert "uv sync --frozen --no-dev --no-install-project" in plan.command
+    assert "UV_PROJECT_ENVIRONMENT" in plan.command
+    assert plan.runtime.environment in plan.command
+    assert "HF_TOKEN" not in json.dumps(plan.to_dict())
+    assert plan.max_runtime == 3600
+
+    compile(lightning._runtime_probe_script(plan.runtime, write_marker=True), "probe", "exec")
+    compile(lightning._runtime_probe_script(plan.runtime, write_marker=False), "probe", "exec")
 
 
 @pytest.mark.parametrize("teamspace", ["", "owner", "owner/team/extra", "-bad/team"])
@@ -189,6 +234,8 @@ class _FakeStudio:
     instances = []
     initial_status = "Stopped"
     remote_exit_code = 0
+    doctor_exit_code = 0
+    provision_exit_code = 0
     initial_environment = {}
 
     def __init__(self, **kwargs):
@@ -197,6 +244,7 @@ class _FakeStudio:
         self.started = []
         self.stopped = False
         self.uploaded = []
+        self.commands = []
         self.environment = dict(self.initial_environment)
         self.__class__.instances.append(self)
 
@@ -221,8 +269,15 @@ class _FakeStudio:
     def upload_file(self, path, remote_path):
         self.uploaded.append((path, remote_path))
 
-    def run_with_exit_code(self, _command):
-        return "remote output\n", self.remote_exit_code
+    def run_with_exit_code(self, command):
+        self.commands.append(command)
+        if "abliteralus.surgery_bench" in command:
+            return "remote output\n", self.remote_exit_code
+        if "pip install" in command:
+            return "provisioned\n", self.provision_exit_code
+        if "runtime-manifests" in command:
+            return "doctor output\n", self.doctor_exit_code
+        return "prepared\n", 0
 
     def download_file(self, _remote, local):
         Path(local).parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +290,62 @@ class _FakeStudio:
 def _stub_bundle(_repo, _specification, destination, **_kwargs):
     destination.write_bytes(b"bundle")
     return {"path": str(destination), "sha256": "fixture", "bytes": 6}
+
+
+def test_provision_materializes_runtime_and_stops_owned_compute(tmp_path, monkeypatch):
+    repo = _minimal_repo(tmp_path)
+    spec = _spec(tmp_path)
+    plan = build_provision_plan(
+        spec,
+        repo_root=repo,
+        teamspace="owner/research",
+        studio="studio",
+        machine="CPU-4",
+        max_runtime=3600,
+    )
+    monkeypatch.setattr(lightning, "build_runtime_bundle", _stub_bundle)
+    _FakeStudio.instances.clear()
+    _FakeStudio.initial_status = "Stopped"
+    _FakeStudio.provision_exit_code = 0
+
+    result = execute_provision_plan(
+        plan,
+        spec=spec,
+        repo_root=repo,
+        local_output=tmp_path / "provision-result",
+        studio_class=_FakeStudio,
+        machine_class=_FakeMachine,
+    )
+    studio = _FakeStudio.instances[-1]
+
+    assert result["runtime_key"] == plan.runtime.key
+    assert studio.started == [
+        {"machine": "machine:CPU-4", "interruptible": False, "max_runtime": 3600}
+    ]
+    assert studio.stopped is True
+    assert len(studio.commands) == 2
+    assert (tmp_path / "provision-result/provision-result.json").is_file()
+
+
+def test_runtime_doctor_is_read_only_and_requires_running_studio(tmp_path):
+    repo = _minimal_repo(tmp_path)
+    runtime = build_runtime_layout(repo, _spec(tmp_path))
+    _FakeStudio.instances.clear()
+    _FakeStudio.initial_status = "Running"
+    _FakeStudio.doctor_exit_code = 0
+
+    result = execute_runtime_doctor(
+        runtime,
+        teamspace="owner/research",
+        studio="studio",
+        studio_class=_FakeStudio,
+    )
+    remote = _FakeStudio.instances[-1]
+
+    assert result["ready"] is True
+    assert remote.started == []
+    assert remote.stopped is False
+    assert remote.uploaded == []
 
 
 def test_execute_stops_only_compute_it_started(tmp_path, monkeypatch):
@@ -325,6 +436,35 @@ def test_remote_failure_still_stops_owned_compute(tmp_path, monkeypatch):
         (tmp_path / "result-failed/lightning-result.json").read_text(encoding="utf-8")
     )
     assert result["remote_exit_code"] == 7
+
+
+def test_unprovisioned_runtime_fails_before_upload_and_stops_owned_compute(tmp_path, monkeypatch):
+    spec = _spec(tmp_path)
+    plan = build_lightning_plan(
+        spec,
+        teamspace="owner/research",
+        studio="studio",
+        machine="L40S",
+        run_id="run-unprovisioned",
+    )
+    monkeypatch.setattr(lightning, "build_runtime_bundle", _stub_bundle)
+    monkeypatch.setattr(_FakeStudio, "doctor_exit_code", 5)
+    _FakeStudio.instances.clear()
+    _FakeStudio.initial_status = "Stopped"
+
+    with pytest.raises(RuntimeError, match="run provision"):
+        execute_lightning_plan(
+            plan,
+            spec=spec,
+            repo_root=tmp_path,
+            local_output=tmp_path / "result-unprovisioned",
+            studio_class=_FakeStudio,
+            machine_class=_FakeMachine,
+        )
+
+    studio = _FakeStudio.instances[-1]
+    assert studio.uploaded == []
+    assert studio.stopped is True
 
 
 def test_plan_can_explicitly_skip_unprovisioned_remote_gguf(tmp_path):
@@ -452,3 +592,15 @@ def test_collect_all_uses_folder_transfer(tmp_path, monkeypatch):
 
     assert result["downloaded"] == ["artifacts/"]
     assert (tmp_path / "result-all/artifacts").is_dir()
+
+
+def test_cli_normalizes_unexpected_provider_errors(monkeypatch, capsys):
+    def fail(_argv=None):
+        raise RuntimeError("provider response headers must not reach the console")
+
+    monkeypatch.setattr(lightning, "_main", fail)
+
+    assert lightning.main([]) == 1
+    captured = capsys.readouterr()
+    assert "RuntimeError" in captured.err
+    assert "provider response headers" not in captured.err

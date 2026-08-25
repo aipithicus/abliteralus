@@ -162,6 +162,10 @@ timeout_constant = 2.0
 on_dependency_change = "rerun"
 
 [tool.uv]
+environments = [
+  "sys_platform == 'win32' and os_name == 'nt'",
+  "sys_platform != 'win32' and os_name == 'posix'",
+]
 constraint-dependencies = [
     "accelerate==1.14.0",
     "aiohappyeyeballs==2.7.1",

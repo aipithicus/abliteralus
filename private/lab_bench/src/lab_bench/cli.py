@@ -71,6 +71,26 @@ def _parser() -> argparse.ArgumentParser:
     studio_commands = studio.add_subparsers(dest="studio_operation", required=True)
     studio_commands.add_parser("status")
 
+    provision = studio_commands.add_parser(
+        "provision", help="materialize the current lock-addressed runtime"
+    )
+    provision.add_argument("--experiment-config", required=True)
+    provision.add_argument("--machine")
+    provision.add_argument("--interruptible", action="store_true")
+    provision.add_argument("--max-runtime", type=_positive_integer)
+    provision.add_argument("--skip-gguf", action="store_true")
+    provision.add_argument("--local-output")
+    provision.add_argument("--keep-running", action="store_true")
+    provision.add_argument("--reuse-running", action="store_true")
+    provision.add_argument("--dry-run", action="store_true")
+
+    doctor = studio_commands.add_parser(
+        "doctor", help="verify a provisioned runtime on a running Studio"
+    )
+    doctor.add_argument("--experiment-config", required=True)
+    doctor.add_argument("--skip-gguf", action="store_true")
+    doctor.add_argument("--local-output")
+
     start = studio_commands.add_parser("start")
     start.add_argument(
         "--purpose",
@@ -114,6 +134,7 @@ def _print_inventory(payload: dict) -> None:
         f"surgery={lightning['surgery_machine']}, "
         f"inference={lightning['inference_machine']}"
     )
+    print(f"remote root: {lightning['remote_root']}")
     ssh = payload["ssh"]
     print(f"SSH: {ssh['destination'] or 'not configured'}")
 
@@ -142,6 +163,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command_name == "studio":
             if args.studio_operation == "status":
                 return bench.studio_status()
+            if args.studio_operation == "provision":
+                return bench.studio_provision(
+                    experiment_config=args.experiment_config,
+                    machine=args.machine,
+                    interruptible=args.interruptible,
+                    max_runtime=args.max_runtime,
+                    skip_gguf=args.skip_gguf,
+                    local_output=args.local_output,
+                    keep_running=args.keep_running,
+                    reuse_running=args.reuse_running,
+                    dry_run=args.dry_run,
+                )
+            if args.studio_operation == "doctor":
+                return bench.studio_doctor(
+                    experiment_config=args.experiment_config,
+                    skip_gguf=args.skip_gguf,
+                    local_output=args.local_output,
+                )
             if args.studio_operation == "start":
                 return bench.studio_start(
                     purpose=args.purpose,

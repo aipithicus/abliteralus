@@ -20,9 +20,12 @@ enabled; this tool does not add permissive SSH options.
 From the ABLITERALUS repository root:
 
 ```text
-uv tool install --editable ./private/secret_manager
-uv tool install --editable ./private/lab_bench
+deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/lab_bench
 ```
+
+This installs both console commands into the existing project venv; it does not
+register Python with Windows or create a global tool environment. Activate the venv
+or invoke `.venv/Scripts/lab-bench.exe` directly.
 
 Use `--config private/lab_bench/lab.local.toml` explicitly at first. Later, the
 non-secret `LAB_BENCH_CONFIG` variable can point to that file if desired.
@@ -30,11 +33,9 @@ non-secret `LAB_BENCH_CONFIG` variable can point to that file if desired.
 ## Local surgery and inference
 
 ```text
-lab-bench --config private/lab_bench/lab.local.toml \
-  local-surgery run --config experiments/example.yaml
+lab-bench --config private/lab_bench/lab.local.toml local-surgery run --config experiments/example.yaml
 
-lab-bench --config private/lab_bench/lab.local.toml \
-  local-inference -- python path/to/chat_client.py
+lab-bench --config private/lab_bench/lab.local.toml local-inference -- python path/to/chat_client.py
 ```
 
 Only an online local `run` receives the `local-surgery` Hub profile. Offline runs,
@@ -45,18 +46,44 @@ preflight, postprocessing, and smoke tests run without a credential environment.
 Planning is local and credential-free:
 
 ```text
-lab-bench --config private/lab_bench/lab.local.toml \
-  lightning-surgery plan --config experiments/example.yaml
+lab-bench --config private/lab_bench/lab.local.toml lightning-surgery plan --config experiments/example.yaml
+```
+
+Provision the Studio runtime explicitly before the first run, and again only when
+`uv.lock`, the pinned uv version, or the requested `base`/`gguf` dependency variant
+changes. `--dry-run` prints the credential-free plan without contacting Lightning.
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml studio provision --experiment-config experiments/example.yaml --dry-run
+
+lab-bench --config private/lab_bench/lab.local.toml studio provision --experiment-config experiments/example.yaml
+```
+
+Provisioning uses the control profile, normally starts the inexpensive control
+machine, installs the repository-pinned uv into an isolated tool environment, and
+materializes a dependency-only environment keyed by the exact lockfile hash. It
+stops compute that it started unless `--keep-running` is explicit. Package and Hub
+caches live beneath the configured persistent `lightning.remote_root` (default
+`.abliteralus` in the Studio home). `--max-runtime SECONDS` places an SDK-side bound
+on compute started by provision or surgery operations.
+
+To inspect that environment without changing it, start the Studio and run doctor:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml studio start --purpose control
+lab-bench --config private/lab_bench/lab.local.toml studio doctor --experiment-config experiments/example.yaml
+lab-bench --config private/lab_bench/lab.local.toml studio stop
 ```
 
 A run receives the Lightning surgery profile. `HF_TOKEN` is passed to the existing
 launcher, forwarded to the Studio only around the remote command, and restored or
 deleted afterward. The launcher stops compute that it started unless its explicit
-`--keep-running` option is used.
+`--keep-running` option is used. Before uploading or exposing the Hub token, it
+checks the exact provisioned runtime. A normal run never installs uv and never runs
+`uv sync`; a missing or stale runtime fails with an instruction to provision it.
 
 ```text
-lab-bench --config private/lab_bench/lab.local.toml \
-  lightning-surgery run --config experiments/example.yaml --collect summary
+lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --collect summary
 ```
 
 ## Studio lifecycle and brief inference

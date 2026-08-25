@@ -23,16 +23,20 @@ quantizer differences.
 From Nushell:
 
 ```nu
-$env.HF_HOME = ((pwd) | path join .codex hf)
+$env.HF_HOME = ((pwd) | path join .scratch cache huggingface)
 
-uv run --frozen --extra gguf abliteralus-surgery preflight \
-  --config experiments/surgery/local-qwen25-0.5b.yaml
+(
+  uv run --frozen --extra gguf abliteralus-surgery preflight
+    --config experiments/surgery/local-qwen25-0.5b.yaml
+)
 
-uv run --frozen --extra gguf abliteralus-surgery run \
-  --config experiments/surgery/local-qwen25-0.5b.yaml
+(
+  uv run --frozen --extra gguf abliteralus-surgery run
+    --config experiments/surgery/local-qwen25-0.5b.yaml
+)
 ```
 
-The workspace-local `.codex` cache is ignored by Git. Allow roughly 8 GB of free
+The workspace-local `.scratch` tree is ignored by Git. Allow roughly 8 GB of free
 disk for the source snapshot, operated checkpoint, temporary float GGUFs, and
 the two final quantized GGUFs. The runner removes float GGUF intermediates only
 after quantization succeeds.
@@ -79,9 +83,11 @@ If conversion or quantization fails after the HF checkpoint was saved, fix the
 preflight issue and resume only that stage:
 
 ```nu
-uv run --frozen --extra gguf abliteralus-surgery postprocess \
-  --config experiments/surgery/local-qwen25-0.5b.yaml \
-  --run-dir outputs/surgery/qwen25-0.5b-local-mini/<run-id>
+(
+  uv run --frozen --extra gguf abliteralus-surgery postprocess
+    --config experiments/surgery/local-qwen25-0.5b.yaml
+    --run-dir outputs/surgery/qwen25-0.5b-local-mini/RUN_ID
+)
 ```
 
 The retry replaces only partial generated GGUF files, records the previous
@@ -91,9 +97,11 @@ To rerun only the deterministic llama.cpp prompts after changing or upgrading
 the local inference executable, keep the verified GGUF files in place and use:
 
 ```nu
-uv run --frozen --extra gguf abliteralus-surgery smoke \
-  --config experiments/surgery/local-qwen25-0.5b.yaml \
-  --run-dir outputs/surgery/qwen25-0.5b-local-mini/<run-id>
+(
+  uv run --frozen --extra gguf abliteralus-surgery smoke
+    --config experiments/surgery/local-qwen25-0.5b.yaml
+    --run-dir outputs/surgery/qwen25-0.5b-local-mini/RUN_ID
+)
 ```
 
 This command verifies both GGUF hashes against the run manifest before loading
@@ -102,16 +110,26 @@ exact Git checkout and llama.cpp probe under `smoke_runtime`.
 
 ## Lightning AI scale lane
 
-The Lightning launcher is a blocking orchestrator around a persistent Studio:
+The Lightning control plane separates infrequent runtime provisioning from each
+experiment launch. Provisioning:
 
 1. Verify that all tracked and untracked runtime inputs are committed.
 2. Build a deterministic bundle containing only `abliteralus/`, `pyproject.toml`,
    `uv.lock`, `README.md`, and the selected experiment YAML.
-3. Start the requested Studio machine if the Studio is stopped.
-4. Upload the bundle, install the pinned `uv`, sync the frozen environment, and
-   run the same `abliteralus-surgery` module.
-5. Collect summary metadata by default.
+3. Install pinned `uv` in an isolated, versioned tool environment.
+4. Materialize a dependency-only environment keyed by the exact lockfile hash
+   and the requested `base` or `gguf` dependency variant.
+5. Retain uv, Hugging Face, and XDG caches beneath the persistent Studio home.
 6. Stop compute if and only if this invocation started it.
+
+A normal surgery launch then:
+
+1. Starts the requested Studio machine if the Studio is stopped.
+2. Runs a read-only doctor check for the exact lock-addressed runtime before
+   uploading code or forwarding a Hub token.
+3. Uploads the deterministic experiment bundle and runs it directly with the
+   provisioned environment's Python. It does not install uv or run `uv sync`.
+4. Collects summary metadata by default and releases compute it started.
 
 The bundle explicitly excludes `.git/`, `private/`, `ci/`, tests, local caches,
 and unrelated worktree content. A dirty package or lockfile is rejected so a
@@ -132,30 +150,75 @@ ABLITERALUS package continues to support Python 3.10.
 Planning is local, does not import the SDK, and does not start paid compute:
 
 ```nu
-uv run --frozen --extra lightning abliteralus-lightning plan \
-  --config experiments/surgery/lightning-qwen25-7b.yaml \
-  --teamspace OWNER/TEAMSPACE \
-  --studio abliteralus-surgery \
-  --machine L40S \
-  --interruptible
+(
+  uv run --frozen --extra lightning abliteralus-lightning plan
+    --config experiments/surgery/lightning-qwen25-7b.yaml
+    --teamspace OWNER/TEAMSPACE
+    --studio abliteralus-surgery
+    --machine L40S
+    --interruptible
+)
+```
+
+Provisioning can also be reviewed locally before it contacts Lightning:
+
+```nu
+(
+  uv run --frozen --extra lightning abliteralus-lightning provision
+    --config experiments/surgery/lightning-qwen25-7b.yaml
+    --teamspace OWNER/TEAMSPACE
+    --studio abliteralus-surgery
+    --machine CPU-4
+    --dry-run
+)
+```
+
+Run the real provision operation before the first experiment and again only
+when `uv.lock`, the pinned uv version, or the selected dependency variant changes:
+
+```nu
+(
+  uv run --frozen --extra lightning abliteralus-lightning provision
+    --config experiments/surgery/lightning-qwen25-7b.yaml
+    --teamspace OWNER/TEAMSPACE
+    --studio abliteralus-surgery
+    --machine CPU-4
+)
+```
+
+`doctor` is deliberately non-provisioning and requires the Studio to already be
+running. It validates the uv version, runtime marker, lock hash, Python, and required
+imports without forwarding `HF_TOKEN`:
+
+```nu
+(
+  uv run --frozen --extra lightning abliteralus-lightning doctor
+    --config experiments/surgery/lightning-qwen25-7b.yaml
+    --teamspace OWNER/TEAMSPACE
+    --studio abliteralus-surgery
+)
 ```
 
 Run only after reviewing that plan:
 
 ```nu
-uv run --frozen --extra lightning abliteralus-lightning run \
-  --config experiments/surgery/lightning-qwen25-7b.yaml \
-  --teamspace OWNER/TEAMSPACE \
-  --studio abliteralus-surgery \
-  --machine L40S \
-  --interruptible
+(
+  uv run --frozen --extra lightning abliteralus-lightning run
+    --config experiments/surgery/lightning-qwen25-7b.yaml
+    --teamspace OWNER/TEAMSPACE
+    --studio abliteralus-surgery
+    --machine L40S
+    --interruptible
+)
 ```
 
 Starting GPU compute incurs Lightning charges. The default run remains attached
 until surgery finishes and then releases compute it started, including after a
 remote failure. If the Studio was already running, the launcher requires
 `--reuse-running` and will not stop or switch that existing machine. Use
-`--keep-running` only when intentionally retaining compute after the run.
+`--keep-running` only when intentionally retaining compute after the run. When the
+launcher owns the start, `--max-runtime SECONDS` forwards an SDK-side allocation
+bound to Lightning.
 
 No credential is forwarded implicitly. For a gated model, opt in by naming the
 already-set local variable:
@@ -170,6 +233,20 @@ including when a run fails or reuses an already-running Studio.
 The default `--collect summary` downloads manifests and logs while leaving the
 large checkpoint on persistent Studio storage. `--collect all` downloads the
 whole output directory; `--collect none` leaves every artifact remote.
+
+The default persistent layout is:
+
+```text
+$HOME/.abliteralus/
+  tools/uv/<version>/
+  runtimes/<lock-hash>-<variant>/
+  runtime-manifests/<lock-hash>-<variant>.json
+  cache/uv/
+  cache/huggingface/
+  cache/xdg/
+  bundles/
+  runs/<run-id>/
+```
 
 The initial 7B profile deliberately leaves GGUF disabled. It proves the larger
 HF surgery lane without also provisioning a compiler and a pinned llama.cpp
