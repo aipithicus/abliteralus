@@ -77,10 +77,12 @@ def test_checked_in_profiles_are_valid_and_pin_model_revisions():
     assert local.capsule_enabled is True
     assert guard.model["revision"] == "acf7aafa60f0410f8f42b1fa35e077d705892029"
     assert guard.evaluation_enabled is True
+    assert guard.model["dtype"] == "bfloat16"
     assert guard.pipeline["use_chat_template"] is True
     assert guard.pipeline["skip_standard_verify"] is True
     assert len(guard.evaluation["cases"]) == 8
     assert guard_mirror.model["source"] == "project-free-llama/Llama-Guard-3-1B"
+    assert guard_mirror.model["dtype"] == "bfloat16"
     assert guard_mirror.model["revision"] == "fee8780b6e2dfdd9fd7d60dcbac1a8ee1b166af5"
     assert guard_mirror.model["upstream_source"] == "meta-llama/Llama-Guard-3-1B"
     assert guard_mirror.model["upstream_revision"] == "acf7aafa60f0410f8f42b1fa35e077d705892029"
@@ -459,6 +461,31 @@ def test_snapshot_resolution_passes_pin_and_offline_policy(tmp_path, monkeypatch
     assert captured["local_files_only"] is True
     assert "*.gguf" in captured["ignore_patterns"]
     assert "original/*" in captured["ignore_patterns"]
+
+
+def test_preflight_rejects_bfloat16_on_unsupported_cuda(tmp_path, monkeypatch):
+    import torch
+
+    spec = load_experiment_spec(
+        _write_config(
+            tmp_path,
+            model_overrides={"device": "cuda", "dtype": "bfloat16"},
+        )
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda _index: "fixture GPU")
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_properties",
+        lambda _index: type("Properties", (), {"total_memory": 4_000_000_000})(),
+    )
+
+    report = preflight_experiment(spec, skip_gguf=True)
+
+    assert report["cuda"]["bf16_supported"] is False
+    assert report["ready"] is False
+    assert any("BF16 support" in failure for failure in report["failures"])
 
 
 def test_usage_output_counts_as_successful_quantizer_probe(tmp_path, monkeypatch):

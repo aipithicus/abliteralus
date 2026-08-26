@@ -700,6 +700,9 @@ def preflight_experiment(
                     if torch.cuda.is_available()
                     else None
                 ),
+                "bf16_supported": (
+                    torch.cuda.is_bf16_supported() if torch.cuda.is_available() else None
+                ),
             }
         )
     except Exception as error:  # pragma: no cover - import failures are environment-specific
@@ -734,6 +737,13 @@ def preflight_experiment(
     )
     if cuda["required"] and not cuda.get("available"):
         failures.append("model.device requires CUDA, but torch.cuda.is_available() is false")
+    if (
+        cuda["required"]
+        and spec.model["dtype"] == "bfloat16"
+        and cuda.get("available")
+        and not cuda.get("bf16_supported")
+    ):
+        failures.append("model.dtype requires CUDA BF16 support, but the selected GPU lacks it")
     if gguf_required:
         if not converter["found"]:
             failures.append("GGUF converter not found")

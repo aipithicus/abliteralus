@@ -5,7 +5,7 @@ model:
   source: meta-llama/Llama-Guard-3-1B
   revision: acf7aafa60f0410f8f42b1fa35e077d705892029
   device: cuda
-  dtype: float16
+  dtype: bfloat16
   trust_remote_code: false
   local_files_only: false
 

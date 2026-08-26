@@ -9,7 +9,7 @@ model:
   expected_sha256:
     model.safetensors: e010146ce3209c8e1485021cbea5462f3f04461be924a066b6c0d80085b17957
   device: cuda
-  dtype: float16
+  dtype: bfloat16
   trust_remote_code: false
   local_files_only: false
 

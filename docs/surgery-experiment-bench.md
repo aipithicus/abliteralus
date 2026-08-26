@@ -57,6 +57,9 @@ profile skips the ordinary assistant-coherence/refusal verifier and instead
 loads the untouched and operated checkpoints sequentially, recording generated
 verdicts and the first-token `unsafe - safe` logit margin in
 `evaluation/hf-results.json`. This keeps peak VRAM bounded to one evaluated model.
+Both profiles preserve the source checkpoint's BF16 tensor contract so an exact
+capsule does not degenerate into a full-checkpoint FP16 conversion. CUDA preflight
+fails closed when a BF16 profile is selected on a GPU without BF16 support.
 
 While official access is pending,
 `experiments/surgery/local-llama-guard-3-1b-mirror.yaml` pins the public
