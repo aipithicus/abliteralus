@@ -27,6 +27,7 @@ def _write_config(
     tmp_path: Path,
     *,
     model_source: str | None = None,
+    model_overrides: dict | None = None,
     pipeline: dict | None = None,
     gguf: dict | None = None,
     artifact: dict | None = None,
@@ -35,16 +36,18 @@ def _write_config(
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir(exist_ok=True)
     path = tmp_path / "experiment.yaml"
+    model = {
+        "source": model_source or str(checkpoint),
+        "device": "cpu",
+        "dtype": "float32",
+    }
+    model.update(model_overrides or {})
     path.write_text(
         yaml.safe_dump(
             {
                 "schema_version": 1,
                 "name": "unit-mini",
-                "model": {
-                    "source": model_source or str(checkpoint),
-                    "device": "cpu",
-                    "dtype": "float32",
-                },
+                "model": model,
                 "pipeline": pipeline or {"method": "basic", "n_directions": 1},
                 "prompts": {"harmful": 3, "harmless": 2, "jailbreak": 0},
                 "output": {"root": str(tmp_path / "outputs")},
@@ -63,6 +66,9 @@ def test_checked_in_profiles_are_valid_and_pin_model_revisions():
     repo = Path(__file__).resolve().parents[1]
     local = load_experiment_spec(repo / "experiments/surgery/local-qwen25-0.5b.yaml")
     guard = load_experiment_spec(repo / "experiments/surgery/local-llama-guard-3-1b.yaml")
+    guard_mirror = load_experiment_spec(
+        repo / "experiments/surgery/local-llama-guard-3-1b-mirror.yaml"
+    )
     remote = load_experiment_spec(repo / "experiments/surgery/lightning-qwen25-7b.yaml")
 
     assert local.model["revision"] == "c89bee90d9f811437d9735454613c35b4a3c4dc8"
@@ -74,6 +80,13 @@ def test_checked_in_profiles_are_valid_and_pin_model_revisions():
     assert guard.pipeline["use_chat_template"] is True
     assert guard.pipeline["skip_standard_verify"] is True
     assert len(guard.evaluation["cases"]) == 8
+    assert guard_mirror.model["source"] == "project-free-llama/Llama-Guard-3-1B"
+    assert guard_mirror.model["revision"] == "fee8780b6e2dfdd9fd7d60dcbac1a8ee1b166af5"
+    assert guard_mirror.model["upstream_source"] == "meta-llama/Llama-Guard-3-1B"
+    assert guard_mirror.model["upstream_revision"] == "acf7aafa60f0410f8f42b1fa35e077d705892029"
+    assert guard_mirror.model["expected_sha256"]["model.safetensors"] == (
+        "e010146ce3209c8e1485021cbea5462f3f04461be924a066b6c0d80085b17957"
+    )
     assert remote.model["revision"] == "a09a35458c702b33eeacc393d103063234e8bc28"
     assert remote.gguf_enabled is False
     assert remote.capsule_enabled is True
@@ -86,6 +99,49 @@ def test_direct_gguf_surgery_is_rejected(tmp_path):
 
     with pytest.raises(BenchConfigError, match="postprocess"):
         load_experiment_spec(path)
+
+
+def test_mirror_provenance_requires_a_complete_upstream_identity(tmp_path):
+    path = _write_config(
+        tmp_path,
+        model_overrides={"upstream_source": "owner/upstream"},
+    )
+
+    with pytest.raises(BenchConfigError, match="specified together"):
+        load_experiment_spec(path)
+
+
+@pytest.mark.parametrize(
+    "expected, message",
+    [
+        ({"../weights.bin": "0" * 64}, "checkpoint-relative"),
+        ({"weights.bin": "not-a-hash"}, "64-character SHA-256"),
+    ],
+)
+def test_expected_checkpoint_hashes_are_strictly_validated(tmp_path, expected, message):
+    path = _write_config(
+        tmp_path,
+        model_overrides={"expected_sha256": expected},
+    )
+
+    with pytest.raises(BenchConfigError, match=message):
+        load_experiment_spec(path)
+
+
+def test_checkpoint_hash_verification_fails_closed(tmp_path):
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    weights = checkpoint / "weights.bin"
+    weights.write_bytes(b"verified weights")
+    expected = bench._sha256(weights)
+
+    assert bench._verify_checkpoint_files(checkpoint, {"weights.bin": expected}) == {
+        "weights.bin": {"sha256": expected, "bytes": 16}
+    }
+
+    weights.write_bytes(b"tampered")
+    with pytest.raises(RuntimeError, match="hash mismatch"):
+        bench._verify_checkpoint_files(checkpoint, {"weights.bin": expected})
 
 
 def test_unknown_pipeline_key_is_rejected(tmp_path):
@@ -157,7 +213,15 @@ def test_tool_discovery_finds_sibling_llama_source_checkout(tmp_path):
 
 
 def test_run_records_manifest_and_enforces_prompt_limits(tmp_path):
-    spec = load_experiment_spec(_write_config(tmp_path))
+    spec = load_experiment_spec(
+        _write_config(
+            tmp_path,
+            model_overrides={
+                "upstream_source": "owner/upstream",
+                "upstream_revision": "0123456789abcdef",
+            },
+        )
+    )
     captured: dict = {}
 
     class FakePipeline:
@@ -179,6 +243,9 @@ def test_run_records_manifest_and_enforces_prompt_limits(tmp_path):
 
     assert manifest["status"] == "complete"
     assert manifest["stages"]["surgery"]["status"] == "complete"
+    assert manifest["model"]["upstream_source"] == "owner/upstream"
+    assert manifest["model"]["upstream_revision"] == "0123456789abcdef"
+    assert manifest["model"]["verified_files"] == {}
     assert len(captured["harmful_prompts"]) == 3
     assert len(captured["harmless_prompts"]) == 2
     assert captured["model_name"] == str((tmp_path / "checkpoint").resolve())
@@ -375,6 +442,7 @@ def test_snapshot_resolution_passes_pin_and_offline_policy(tmp_path, monkeypatch
     assert captured["revision"] == "0123456789abcdef"
     assert captured["local_files_only"] is True
     assert "*.gguf" in captured["ignore_patterns"]
+    assert "original/*" in captured["ignore_patterns"]
 
 
 def test_usage_output_counts_as_successful_quantizer_probe(tmp_path, monkeypatch):

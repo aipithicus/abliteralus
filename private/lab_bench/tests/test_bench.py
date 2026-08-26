@@ -94,6 +94,29 @@ def test_offline_local_surgery_does_not_load_secret_manager(
     assert observed["command"][-1] == "--offline"
 
 
+def test_anonymous_local_surgery_strips_hub_credentials(
+    configured_bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench, manager = configured_bench
+    observed: dict = {}
+    monkeypatch.setenv("HF_TOKEN", "must-not-reach-child")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "must-not-reach-child")
+
+    def fake_run(command, **kwargs):
+        observed["command"] = list(command)
+        observed["environ"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("lab_bench.bench.subprocess.run", fake_run)
+
+    assert bench.local_surgery(["run", "--config", "experiment.yaml"], anonymous_hub=True) == 0
+    assert not manager.calls
+    assert "HF_TOKEN" not in observed["environ"]
+    assert "HUGGING_FACE_HUB_TOKEN" not in observed["environ"]
+    assert observed["environ"]["HF_HUB_DISABLE_IMPLICIT_TOKEN"] == "1"
+    assert observed["command"][-3:] == ["run", "--config", "experiment.yaml"]
+
+
 def test_lightning_plan_adds_defaults_without_credentials(
     configured_bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:

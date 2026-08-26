@@ -50,6 +50,11 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("--json", action="store_true")
 
     local_surgery = commands.add_parser("local-surgery", help="invoke abliteralus.surgery_bench")
+    local_surgery.add_argument(
+        "--anonymous-hub",
+        action="store_true",
+        help="run without Proton Pass or implicit Hugging Face credentials",
+    )
     local_surgery.add_argument("arguments", nargs=argparse.REMAINDER)
 
     lightning_surgery = commands.add_parser(
@@ -179,7 +184,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _print_inventory(payload)
             return 0
         if args.command_name == "local-surgery":
-            return bench.local_surgery(args.arguments)
+            return bench.local_surgery(args.arguments, anonymous_hub=args.anonymous_hub)
         if args.command_name == "lightning-surgery":
             return bench.lightning_surgery(args.arguments)
         if args.command_name == "local-inference":

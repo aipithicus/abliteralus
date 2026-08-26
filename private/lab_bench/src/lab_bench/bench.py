@@ -88,7 +88,7 @@ class LabBench:
             },
         }
 
-    def local_surgery(self, arguments: Sequence[str]) -> int:
+    def local_surgery(self, arguments: Sequence[str], *, anonymous_hub: bool = False) -> int:
         surgery_arguments = _arguments(arguments, "local-surgery requires a surgery command")
         module = (
             "surgery_artifacts.integration"
@@ -102,6 +102,11 @@ class LabBench:
         # ``--offline`` appears as another option's value. That safe-direction
         # false positive is preferable to injecting a token into an offline run.
         needs_hub = surgery_arguments[0] == "run" and "--offline" not in surgery_arguments
+        if anonymous_hub:
+            environment.pop("HF_TOKEN", None)
+            environment.pop("HUGGING_FACE_HUB_TOKEN", None)
+            environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+            return self._direct(command, environ=environment)
         if needs_hub:
             return self.manager.run(
                 self.config.profiles.local_surgery,

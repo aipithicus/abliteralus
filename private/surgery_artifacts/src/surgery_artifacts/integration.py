@@ -33,6 +33,9 @@ def run_artifact_stage(context: ArtifactStageContext) -> dict[str, Any]:
             "source": spec.model["source"],
             "revision": spec.model["revision"],
             "resolved_revision": model.get("resolved_revision"),
+            "upstream_source": spec.model.get("upstream_source"),
+            "upstream_revision": spec.model.get("upstream_revision"),
+            "verified_files": model.get("verified_files", {}),
         }
         recipe = {
             "experiment": spec.name,

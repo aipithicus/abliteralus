@@ -36,11 +36,16 @@ non-secret `LAB_BENCH_CONFIG` variable can point to that file if desired.
 ```text
 lab-bench --config private/lab_bench/lab.local.toml local-surgery run --config experiments/example.yaml
 
+lab-bench --config private/lab_bench/lab.local.toml local-surgery --anonymous-hub run --config experiments/public-mirror.yaml
+
 lab-bench --config private/lab_bench/lab.local.toml local-inference -- python path/to/chat_client.py
 ```
 
 Only an online local `run` receives the `local-surgery` Hub profile. Offline runs,
 preflight, postprocessing, and smoke tests run without a credential environment.
+Use `--anonymous-hub` only for public sources: it bypasses Proton Pass, removes
+inherited Hugging Face token variables, and disables implicit cached credentials
+for the child process.
 
 ## Lightning surgery
 

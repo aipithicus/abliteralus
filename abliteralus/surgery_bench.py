@@ -37,6 +37,7 @@ SCHEMA_VERSION = 1
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
 _HF_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _REVISION = re.compile(r"[A-Za-z0-9._/-]+")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 _QUANTIZATION = re.compile(r"[A-Z0-9_]+")
 _ALLOWED_TOP_LEVEL = {
     "schema_version",
@@ -56,6 +57,9 @@ _ALLOWED_MODEL = {
     "dtype",
     "trust_remote_code",
     "local_files_only",
+    "upstream_source",
+    "upstream_revision",
+    "expected_sha256",
 }
 _ALLOWED_PIPELINE = {
     "method",
@@ -239,6 +243,39 @@ def _validate_source(source: str) -> None:
         )
 
 
+def _validate_revision(value: object, label: str) -> str:
+    revision = _require_text(value, label)
+    if _REVISION.fullmatch(revision) is None or revision.startswith("-"):
+        raise BenchConfigError(f"{label} contains unsupported characters")
+    return revision
+
+
+def _validate_expected_sha256(value: object) -> dict[str, str]:
+    raw = _require_mapping(value, "model.expected_sha256")
+    expected: dict[str, str] = {}
+    for key, value in raw.items():
+        relative_text = _require_text(key, "model.expected_sha256 path")
+        relative = Path(relative_text)
+        if (
+            relative.is_absolute()
+            or relative.drive
+            or any(part in {"", ".", ".."} for part in relative.parts)
+        ):
+            raise BenchConfigError(
+                "model.expected_sha256 paths must be normalized checkpoint-relative paths"
+            )
+        normalized = relative.as_posix()
+        if normalized in expected:
+            raise BenchConfigError("model.expected_sha256 paths must be unique")
+        digest = _require_text(value, f"model.expected_sha256[{normalized}]").lower()
+        if _SHA256.fullmatch(digest) is None:
+            raise BenchConfigError(
+                f"model.expected_sha256[{normalized}] must be a 64-character SHA-256"
+            )
+        expected[normalized] = digest
+    return dict(sorted(expected.items()))
+
+
 @dataclass(frozen=True)
 class SurgeryExperimentSpec:
     """Validated experiment contract shared by the local and Lightning runners."""
@@ -290,9 +327,19 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
     _validate_source(source)
     revision = model.get("revision")
     if revision is not None:
-        revision = _require_text(revision, "model.revision")
-        if _REVISION.fullmatch(revision) is None or revision.startswith("-"):
-            raise BenchConfigError("model.revision contains unsupported characters")
+        revision = _validate_revision(revision, "model.revision")
+    upstream_source = model.get("upstream_source")
+    upstream_revision = model.get("upstream_revision")
+    if (upstream_source is None) != (upstream_revision is None):
+        raise BenchConfigError(
+            "model.upstream_source and model.upstream_revision must be specified together"
+        )
+    if upstream_source is not None:
+        upstream_source = _require_text(upstream_source, "model.upstream_source")
+        if _HF_REPO.fullmatch(upstream_source) is None:
+            raise BenchConfigError("model.upstream_source must be OWNER/MODEL")
+        upstream_revision = _validate_revision(upstream_revision, "model.upstream_revision")
+    expected_sha256 = _validate_expected_sha256(model.get("expected_sha256", {}))
     device = _require_text(model.get("device", "auto"), "model.device")
     if re.fullmatch(r"(?:auto|cpu|mps|cuda(?::[0-9]+)?)", device) is None:
         raise BenchConfigError(
@@ -313,6 +360,11 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
             model.get("local_files_only", False), "model.local_files_only"
         ),
     }
+    if upstream_source is not None:
+        model["upstream_source"] = upstream_source
+        model["upstream_revision"] = upstream_revision
+    if expected_sha256:
+        model["expected_sha256"] = expected_sha256
 
     pipeline = _require_mapping(raw.get("pipeline", {}), "pipeline")
     _reject_unknown(pipeline, _ALLOWED_PIPELINE, "pipeline")
@@ -708,6 +760,11 @@ def preflight_experiment(
         "experiment": spec.name,
         "model_source": spec.model["source"],
         "model_revision": spec.model["revision"],
+        "model_provenance": {
+            "upstream_source": spec.model.get("upstream_source"),
+            "upstream_revision": spec.model.get("upstream_revision"),
+            "expected_sha256": spec.model.get("expected_sha256", {}),
+        },
         "packages": packages,
         "cuda": cuda,
         "disk": {"path": str(destination), "free_bytes": disk.free},
@@ -756,6 +813,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _verify_checkpoint_files(
+    checkpoint: Path, expected_sha256: dict[str, str]
+) -> dict[str, dict[str, Any]]:
+    verified: dict[str, dict[str, Any]] = {}
+    for relative, expected in expected_sha256.items():
+        candidate = checkpoint.joinpath(*Path(relative).parts)
+        if not candidate.is_file():
+            raise RuntimeError(f"pinned checkpoint file is missing: {relative}")
+        actual = _sha256(candidate)
+        if actual != expected:
+            raise RuntimeError(
+                f"pinned checkpoint file hash mismatch: {relative}; "
+                f"expected {expected}, got {actual}"
+            )
+        verified[relative] = {
+            "sha256": actual,
+            "bytes": candidate.stat().st_size,
+        }
+    return verified
+
+
 def _git_value(arguments: Sequence[str]) -> str | None:
     try:
         result = subprocess.run(
@@ -791,6 +869,7 @@ def resolve_model_checkpoint(spec: SurgeryExperimentSpec, *, offline: bool = Fal
             "*.msgpack",
             "*.ot",
             "onnx/*",
+            "original/*",
         ],
     )
     return Path(resolved).resolve()
@@ -1162,11 +1241,15 @@ def run_experiment(
         manifest["stages"]["resolve_model"] = {"status": "running", "started_at": _utc_now()}
         _write_json(manifest_path, manifest)
         checkpoint = resolve_model_checkpoint(spec, offline=offline)
+        verified_files = _verify_checkpoint_files(checkpoint, spec.model.get("expected_sha256", {}))
         manifest["model"] = {
             "requested_source": spec.model["source"],
             "requested_revision": spec.model["revision"],
             "checkpoint": str(checkpoint),
             "resolved_revision": _resolved_snapshot_revision(checkpoint),
+            "upstream_source": spec.model.get("upstream_source"),
+            "upstream_revision": spec.model.get("upstream_revision"),
+            "verified_files": verified_files,
         }
         manifest["stages"]["resolve_model"].update({"status": "complete", "ended_at": _utc_now()})
 

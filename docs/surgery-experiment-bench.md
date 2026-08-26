@@ -57,6 +57,27 @@ loads the untouched and operated checkpoints sequentially, recording generated
 verdicts and the first-token `unsafe - safe` logit margin in
 `evaluation/hf-results.json`. This keeps peak VRAM bounded to one evaluated model.
 
+While official access is pending,
+`experiments/surgery/local-llama-guard-3-1b-mirror.yaml` pins the public
+`project-free-llama/Llama-Guard-3-1B` mirror. Its 13 repository objects match
+the pinned Meta repository object-for-object; the profile records both commits
+and the official `model.safetensors` SHA-256. The runner hashes the downloaded
+weights before surgery and carries the verified identity into the run manifest
+and artifact capsule. The mirror also retains Meta's license and use policy;
+using it does not replace accepting or complying with those terms.
+
+Public mirrors do not need a Hub credential. `--anonymous-hub` bypasses Proton
+Pass, removes inherited Hub token variables, and disables implicit cached-token
+delivery for that child process:
+
+```nu
+(
+  lab-bench --config private/lab_bench/lab.local.toml
+    local-surgery --anonymous-hub run
+    --config experiments/surgery/local-llama-guard-3-1b-mirror.yaml
+)
+```
+
 Run the HF surgery/evaluation/capsule lane without waiting for llama.cpp tooling:
 
 ```nu
