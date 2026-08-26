@@ -52,6 +52,7 @@ def test_config_resolves_paths_and_machine_purposes() -> None:
     assert config.lightning.pending_policy == "fail"
     assert config.lightning.surgery_fallback_machines == ()
     assert config.lightning.surgery_max_runtime_seconds is None
+    assert config.artifacts.registry == repository.resolve() / "outputs/artifact-registry"
 
 
 def test_config_parses_unattended_allocation_policy() -> None:

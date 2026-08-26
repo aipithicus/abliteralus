@@ -28,6 +28,7 @@ def _write_config(
     *,
     model_source: str | None = None,
     gguf: dict | None = None,
+    artifact: dict | None = None,
 ) -> Path:
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir(exist_ok=True)
@@ -46,6 +47,7 @@ def _write_config(
                 "prompts": {"harmful": 3, "harmless": 2, "jailbreak": 0},
                 "output": {"root": str(tmp_path / "outputs")},
                 "gguf": gguf or {"enabled": False},
+                "artifact": artifact or {"mode": "full-checkpoint"},
             },
             sort_keys=False,
         ),
@@ -62,8 +64,10 @@ def test_checked_in_profiles_are_valid_and_pin_model_revisions():
     assert local.model["revision"] == "c89bee90d9f811437d9735454613c35b4a3c4dc8"
     assert local.gguf_enabled is True
     assert local.gguf["compare_baseline"] is True
+    assert local.capsule_enabled is True
     assert remote.model["revision"] == "a09a35458c702b33eeacc393d103063234e8bc28"
     assert remote.gguf_enabled is False
+    assert remote.capsule_enabled is True
 
 
 def test_direct_gguf_surgery_is_rejected(tmp_path):
@@ -149,6 +153,63 @@ def test_run_records_manifest_and_enforces_prompt_limits(tmp_path):
     assert len(captured["harmful_prompts"]) == 3
     assert len(captured["harmless_prompts"]) == 2
     assert captured["model_name"] == str((tmp_path / "checkpoint").resolve())
+
+
+def test_capsule_stage_receives_mutation_hints_before_run_is_finalized(tmp_path):
+    spec = load_experiment_spec(
+        _write_config(
+            tmp_path,
+            artifact={
+                "mode": "capsule",
+                "require_exact": True,
+                "fallback": "error",
+                "exports": [],
+            },
+        )
+    )
+
+    class FakePipeline:
+        def __init__(self, **kwargs):
+            self.output_dir = Path(kwargs["output_dir"])
+
+        def run(self):
+            self.output_dir.mkdir(parents=True)
+            return self.output_dir
+
+    class Sink:
+        def snapshot(self):
+            return ("hint",)
+
+    observed = {}
+
+    def artifact_stage(context):
+        observed["context"] = context
+        return {"path": str(context.run_dir / "artifact"), "surgery_id": "a" * 64}
+
+    run_dir = run_experiment(
+        spec,
+        run_id="artifact-run",
+        pipeline_factory=FakePipeline,
+        artifact_stage=artifact_stage,
+        mutation_sink=Sink(),
+    )
+
+    context = observed["context"]
+    assert context.mutation_hints == ("hint",)
+    assert context.target_checkpoint == run_dir / "hf"
+    manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["stages"]["artifact"]["status"] == "complete"
+    assert manifest["stages"]["artifact"]["surgery_id"] == "a" * 64
+
+
+def test_capsule_configuration_rejects_unknown_export(tmp_path):
+    path = _write_config(
+        tmp_path,
+        artifact={"mode": "capsule", "exports": ["pickle"]},
+    )
+
+    with pytest.raises(BenchConfigError, match="unsupported values"):
+        load_experiment_spec(path)
 
 
 def test_failed_pipeline_leaves_diagnostic_manifest(tmp_path):

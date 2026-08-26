@@ -96,6 +96,8 @@ testpaths = ["tests"]
 addopts = [
     "--strict-config",
     "--strict-markers",
+    "-p",
+    "no:cacheprovider",
     "--cov=abliteralus",
     "--cov-report=term-missing",
     "--cov-fail-under=75",

@@ -29,6 +29,10 @@ control_max_runtime_seconds = 3600
 surgery_max_runtime_seconds = 14400
 inference_max_runtime_seconds = 3600
 
+[artifacts]
+# Durable local storage. Lightning remains compute and staging, not the registry.
+registry = "../../outputs/artifact-registry"
+
 [ssh]
 executable = "ssh"
 destination = ""

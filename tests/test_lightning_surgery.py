@@ -58,7 +58,7 @@ def _spec(tmp_path: Path, *, local_source: bool = False):
 
 def _git(repo: Path, *arguments: str) -> None:
     result = subprocess.run(
-        ["git", "-C", str(repo), *arguments],
+        ["git", "-c", "commit.gpgsign=false", "-C", str(repo), *arguments],
         capture_output=True,
         text=True,
         check=False,
@@ -69,9 +69,12 @@ def _git(repo: Path, *arguments: str) -> None:
 def _minimal_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / "abliteralus").mkdir(parents=True)
-    (repo / "private").mkdir()
+    (repo / "private/surgery_artifacts/src/surgery_artifacts").mkdir(parents=True)
     (repo / "abliteralus/module.py").write_text("VALUE = 1\n", encoding="utf-8")
     (repo / "private/secret.txt").write_text("not for upload\n", encoding="utf-8")
+    (repo / "private/surgery_artifacts/src/surgery_artifacts/__init__.py").write_text(
+        "FORMAT = 1\n", encoding="utf-8"
+    )
     (repo / "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n", encoding="utf-8")
     (repo / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     (repo / "README.md").write_text("runtime\n", encoding="utf-8")
@@ -130,7 +133,8 @@ def test_plan_is_shell_safe_and_contains_no_forwarded_secret_value(tmp_path, mon
     assert "pip install" not in plan.command
     assert plan.runtime.key in plan.command
     assert plan.runtime.uv_version == "0.12.4"
-    assert "private" not in plan.command
+    assert "private/surgery_artifacts/src" in plan.command
+    assert "private/secret_manager" not in plan.command
 
 
 def test_plan_records_explicit_ordered_allocation_policy(tmp_path):
@@ -205,7 +209,7 @@ def test_plan_rejects_ambiguous_teamspace(tmp_path, teamspace):
         )
 
 
-def test_bundle_is_deterministic_and_excludes_private_tree(tmp_path):
+def test_bundle_is_deterministic_and_allowlists_only_artifact_private_tree(tmp_path):
     repo = _minimal_repo(tmp_path)
     spec = _spec(tmp_path)
     first = tmp_path / "first.zip"
@@ -220,6 +224,7 @@ def test_bundle_is_deterministic_and_excludes_private_tree(tmp_path):
     assert "abliteralus/module.py" in names
     assert "experiment.yaml" in names
     assert "bundle-manifest.json" in names
+    assert "private/surgery_artifacts/src/surgery_artifacts/__init__.py" in names
     assert "private/secret.txt" not in names
 
 
@@ -298,7 +303,7 @@ class _FakeStudio:
 
     def run_with_exit_code(self, command):
         self.commands.append(command)
-        if "abliteralus.surgery_bench" in command:
+        if "surgery_artifacts.integration" in command:
             return "remote output\n", self.remote_exit_code
         if "pip install" in command:
             return "provisioned\n", self.provision_exit_code
@@ -952,6 +957,91 @@ def test_collect_all_uses_folder_transfer(tmp_path, monkeypatch):
 
     assert result["downloaded"] == ["artifacts/"]
     assert (tmp_path / "result-all/artifacts").is_dir()
+
+
+def test_collect_capsule_records_local_verification_before_release(tmp_path, monkeypatch):
+    spec = _spec(tmp_path)
+    plan = build_lightning_plan(
+        spec,
+        teamspace="owner/research",
+        studio="studio",
+        machine="H200",
+        run_id="run-capsule",
+    )
+    monkeypatch.setattr(lightning, "build_runtime_bundle", _stub_bundle)
+    monkeypatch.setattr(
+        lightning,
+        "_download_capsule",
+        lambda _studio, _plan, _destination: (
+            ["run-manifest.json", "artifact/"],
+            {
+                "surgery_id": "a" * 64,
+                "operation_count": 4,
+                "file_count": 5,
+                "total_bytes": 1024,
+                "verified": True,
+            },
+        ),
+    )
+    _FakeStudio.instances.clear()
+    _FakeStudio.initial_status = "Stopped"
+    _FakeStudio.remote_exit_code = 0
+
+    result = execute_lightning_plan(
+        plan,
+        spec=spec,
+        repo_root=tmp_path,
+        local_output=tmp_path / "result-capsule",
+        collect="capsule",
+        studio_class=_FakeStudio,
+        machine_class=_FakeMachine,
+    )
+
+    assert result["capsule_validation"]["verified"] is True
+    assert result["capsule_validation"]["surgery_id"] == "a" * 64
+    assert _FakeStudio.instances[-1].stopped is True
+
+
+def test_failed_capsule_run_collects_diagnostics_without_requesting_capsule(
+    tmp_path, monkeypatch
+):
+    spec = _spec(tmp_path)
+    plan = build_lightning_plan(
+        spec,
+        teamspace="owner/research",
+        studio="studio",
+        machine="H200",
+        run_id="run-capsule-failed",
+    )
+    monkeypatch.setattr(lightning, "build_runtime_bundle", _stub_bundle)
+    monkeypatch.setattr(
+        lightning,
+        "_download_capsule",
+        lambda *_args, **_kwargs: pytest.fail("failed runs must not request a capsule"),
+    )
+    _FakeStudio.instances.clear()
+    _FakeStudio.initial_status = "Stopped"
+    _FakeStudio.remote_exit_code = 7
+
+    with pytest.raises(RuntimeError, match="exit code 7"):
+        execute_lightning_plan(
+            plan,
+            spec=spec,
+            repo_root=tmp_path,
+            local_output=tmp_path / "result-capsule-failed",
+            collect="capsule",
+            studio_class=_FakeStudio,
+            machine_class=_FakeMachine,
+        )
+
+    result = json.loads(
+        (tmp_path / "result-capsule-failed/lightning-result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "run-manifest.json" in result["downloaded"]
+    assert result["capsule_validation"] is None
+    assert _FakeStudio.instances[-1].stopped is True
 
 
 def test_cli_normalizes_unexpected_provider_errors(monkeypatch, capsys):

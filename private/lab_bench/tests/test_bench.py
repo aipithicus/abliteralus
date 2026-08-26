@@ -72,7 +72,8 @@ def test_online_local_surgery_uses_local_profile(configured_bench) -> None:
     assert bench.local_surgery(["run", "--config", "experiment.yaml"]) == 7
     call = manager.calls[0]
     assert call["profile"] == "local-surgery"
-    assert call["command"][1:3] == ["-m", "abliteralus.surgery_bench"]
+    assert call["command"][1:3] == ["-m", "surgery_artifacts.integration"]
+    assert str(Path("private") / "surgery_artifacts" / "src") in call["environ"]["PYTHONPATH"]
     assert call["command"][-3:] == ["run", "--config", "experiment.yaml"]
 
 

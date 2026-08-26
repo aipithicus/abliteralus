@@ -82,6 +82,11 @@ from abliteralus.analysis.numerical_contracts import (  # noqa: E402
     residualize_against_shield_atoms,
     select_projection_coefficients,
 )
+from abliteralus.artifact_contracts import (  # noqa: E402
+    MutationHintSink,
+    capture_mutation_hints,
+    emit_projection_hint,
+)
 from abliteralus.persistence_contracts import (  # noqa: E402
     atomic_checkpoint_directory as _atomic_checkpoint_directory,
     ensure_checkpoint_capacity,
@@ -842,6 +847,7 @@ class AbliterationPipeline:
         refusal_max_tokens: int | None = None,
         on_stage: Callable[[StageResult], None] | None = None,
         on_log: Callable[[str], None] | None = None,
+        mutation_sink: MutationHintSink | None = None,
     ):
         self.model_name = model_name
         self.output_dir = Path(output_dir)
@@ -876,6 +882,7 @@ class AbliterationPipeline:
         self._on_log = on_log or (lambda m: None)
         self._stage_durations: dict[str, float] = {}
         self._excise_modified_count: int | None = None
+        self._mutation_sink = mutation_sink
 
         # Resolve method configuration (explicit params override method defaults)
         if method not in METHODS:
@@ -1296,7 +1303,8 @@ class AbliterationPipeline:
         self._routing_harmless.clear()
         self._free_gpu_memory()
         self._capture_baseline_kl_logits()
-        self._excise()
+        with capture_mutation_hints(self._mutation_sink):
+            self._excise()
         self._free_gpu_memory()
         self._verify()
         self._free_gpu_memory()
@@ -1326,6 +1334,8 @@ class AbliterationPipeline:
             quantization=self.quantization,
             gpu_memory_utilization=self.gpu_memory_utilization,
         )
+        if self._mutation_sink is not None:
+            self._mutation_sink.bind_model(self.handle.model)
 
         summary = self.handle.summary()
         elapsed = time.time() - t0
@@ -5223,6 +5233,17 @@ class AbliterationPipeline:
             for transaction in reversed(committed):
                 transaction.rollback()
             raise
+
+        for proj, _transaction, _weight, _is_quantized, _updated in updates:
+            emit_projection_hint(
+                proj,
+                "weight",
+                direction,
+                norm_preserve=norm_preserve,
+                regularization=regularization,
+                projection_row_fraction=projection_row_fraction,
+                max_norm_ratio=_MAX_NORM_RATIO,
+            )
 
         return count
 

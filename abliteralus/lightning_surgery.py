@@ -2,8 +2,9 @@
 
 The launcher uploads a narrow, reproducible runtime bundle, executes the same
 ``surgery_bench`` contract used locally, collects requested artifacts, and
-releases compute that it started. It deliberately excludes ``private/``, Git
-metadata, caches, tests, and unrelated worktree content from the upload.
+releases compute that it started. It includes only the artifact backend from
+``private/`` and excludes Git metadata, caches, tests, and unrelated worktree
+content from the upload.
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 _MACHINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _PATH_SEGMENT = re.compile(r"\.?[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
-_RUNTIME_ROOTS = ("abliteralus/",)
+_RUNTIME_ROOTS = ("abliteralus/", "private/surgery_artifacts/src/")
 _RUNTIME_FILES = {"pyproject.toml", "uv.lock", "README.md"}
 
 
@@ -190,7 +191,7 @@ def build_runtime_bundle(
             "files": file_hashes,
             "excludes": [
                 ".git/",
-                "private/",
+                "private/* except private/surgery_artifacts/src/",
                 "ci/",
                 "tests/",
                 ".codex/",
@@ -682,7 +683,7 @@ def build_lightning_plan(
     surgery_arguments = [
         runtime_python,
         "-m",
-        "abliteralus.surgery_bench",
+        "surgery_artifacts.integration",
         "run",
         "--config",
         "experiment.yaml",
@@ -703,6 +704,7 @@ def build_lightning_plan(
         f"mkdir -p {_home_path(remote_source)} {_home_path(runtime.hf_home)} {_home_path(runtime.xdg_cache)}",
         (f"python -m zipfile -e {_home_path(remote_bundle)} {_home_path(remote_source)}"),
         f"cd {_home_path(remote_source)}",
+        'export PYTHONPATH="$PWD/private/surgery_artifacts/src${PYTHONPATH:+:$PYTHONPATH}"',
         f"export HF_HOME={_home_path(runtime.hf_home)}",
         f"export XDG_CACHE_HOME={_home_path(runtime.xdg_cache)}",
         surgery_command,
@@ -1250,6 +1252,40 @@ def _download_summary(studio: Any, plan: LightningRunPlan, destination: Path) ->
     return downloaded
 
 
+def _download_capsule(
+    studio: Any,
+    plan: LightningRunPlan,
+    destination: Path,
+) -> tuple[list[str], dict[str, Any]]:
+    downloaded = _download_summary(studio, plan, destination)
+    capsule_destination = destination / "artifact"
+    remote_capsule = str(PurePosixPath(plan.remote_output) / "artifact")
+    studio.download_folder(remote_capsule, str(capsule_destination))
+    try:
+        from surgery_artifacts.validation import validate_capsule
+    except ImportError as error:
+        raise RuntimeError(
+            "capsule collection requires the private surgery_artifacts package on PYTHONPATH"
+        ) from error
+    validation = validate_capsule(capsule_destination)
+    downloaded.append("artifact/")
+    remote_exports = str(PurePosixPath(plan.remote_output) / "artifact-exports")
+    export_destination = destination / "artifact-exports"
+    try:
+        studio.download_folder(remote_exports, str(export_destination))
+    except (OSError, RuntimeError, FileNotFoundError):
+        pass
+    else:
+        downloaded.append("artifact-exports/")
+    return downloaded, {
+        "surgery_id": validation.surgery_id,
+        "operation_count": validation.operation_count,
+        "file_count": validation.file_count,
+        "total_bytes": validation.total_bytes,
+        "verified": True,
+    }
+
+
 def execute_provision_plan(
     plan: LightningProvisionPlan,
     *,
@@ -1295,7 +1331,9 @@ def execute_provision_plan(
     remote_completed_at: str | None = None
     remote_started_clock: float | None = None
     remote_completed_clock: float | None = None
-    with tempfile.TemporaryDirectory(prefix="abliteralus-provision-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".abliteralus-provision-", dir=local_output
+    ) as temporary:
         bundle_path = Path(temporary) / f"{plan.runtime.key}.zip"
         bundle = build_runtime_bundle(repo_root, spec, bundle_path)
         (local_output / "bundle-manifest.json").write_text(
@@ -1544,8 +1582,8 @@ def execute_lightning_plan(
     machine_class: Any | None = None,
 ) -> dict[str, Any]:
     """Execute a blocking Studio run and release only compute started here."""
-    if collect not in {"none", "summary", "all"}:
-        raise LightningConfigError("collect must be none, summary, or all")
+    if collect not in {"none", "summary", "capsule", "all"}:
+        raise LightningConfigError("collect must be none, summary, capsule, or all")
     use_start_subprocess = studio_class is None or machine_class is None
     if studio_class is None or machine_class is None:
         try:
@@ -1572,6 +1610,7 @@ def execute_lightning_plan(
     remote_exit_code: int | None = None
     remote_output = ""
     downloaded: list[str] = []
+    capsule_validation: dict[str, Any] | None = None
     previous_environment: dict[str, tuple[bool, str | None]] = {}
     operation_started_at = _utc_timestamp()
     operation_started_clock = time.monotonic()
@@ -1579,7 +1618,9 @@ def execute_lightning_plan(
     remote_completed_at: str | None = None
     remote_started_clock: float | None = None
     remote_completed_clock: float | None = None
-    with tempfile.TemporaryDirectory(prefix="abliteralus-lightning-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".abliteralus-lightning-", dir=local_output
+    ) as temporary:
         bundle_path = Path(temporary) / f"{plan.run_id}.zip"
         bundle = build_runtime_bundle(repo_root, spec, bundle_path)
         (local_output / "bundle-manifest.json").write_text(
@@ -1650,6 +1691,13 @@ def execute_lightning_plan(
             )
             if collect == "summary":
                 downloaded = _download_summary(studio, plan, local_output)
+            elif collect == "capsule":
+                if remote_exit_code == 0:
+                    downloaded, capsule_validation = _download_capsule(
+                        studio, plan, local_output
+                    )
+                else:
+                    downloaded = _download_summary(studio, plan, local_output)
             elif collect == "all":
                 destination = local_output / "artifacts"
                 destination.mkdir(parents=True, exist_ok=True)
@@ -1672,6 +1720,7 @@ def execute_lightning_plan(
         "runtime_variant": plan.runtime.variant,
         "remote_exit_code": remote_exit_code,
         "downloaded": downloaded,
+        "capsule_validation": capsule_validation,
         "local_output": str(local_output),
         "studio_started_here": started_here,
         "studio_adopted_pending": adopted_pending,
@@ -1778,7 +1827,11 @@ def _parser() -> argparse.ArgumentParser:
         add_allocation(command)
         if name == "run":
             command.add_argument("--local-output", type=Path)
-            command.add_argument("--collect", choices=("none", "summary", "all"), default="summary")
+            command.add_argument(
+                "--collect",
+                choices=("none", "summary", "capsule", "all"),
+                default="summary",
+            )
             command.add_argument("--keep-running", action="store_true")
             command.add_argument("--reuse-running", action="store_true")
 

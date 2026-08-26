@@ -25,6 +25,12 @@ from typing import Any, Callable, Sequence
 
 import yaml
 
+from abliteralus.artifact_contracts import (
+    ArtifactStage,
+    ArtifactStageContext,
+    MutationHintSink,
+)
+
 
 SCHEMA_VERSION = 1
 _NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
@@ -39,6 +45,7 @@ _ALLOWED_TOP_LEVEL = {
     "prompts",
     "output",
     "gguf",
+    "artifact",
 }
 _ALLOWED_MODEL = {
     "source",
@@ -86,6 +93,7 @@ _ALLOWED_GGUF = {
     "max_tokens",
     "smoke_prompts",
 }
+_ALLOWED_ARTIFACT = {"mode", "require_exact", "fallback", "exports", "max_low_rank"}
 
 
 class BenchConfigError(ValueError):
@@ -228,11 +236,16 @@ class SurgeryExperimentSpec:
     prompts: dict[str, int]
     output_root: str
     gguf: dict[str, Any]
+    artifact: dict[str, Any]
     source_path: Path
 
     @property
     def gguf_enabled(self) -> bool:
         return bool(self.gguf["enabled"])
+
+    @property
+    def capsule_enabled(self) -> bool:
+        return self.artifact["mode"] == "capsule"
 
 
 def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
@@ -339,6 +352,49 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
         if gguf[key] is not None:
             gguf[key] = _require_text(gguf[key], f"gguf.{key}")
 
+    artifact_raw = _require_mapping(raw.get("artifact", {}), "artifact")
+    _reject_unknown(artifact_raw, _ALLOWED_ARTIFACT, "artifact")
+    artifact_mode = _require_text(
+        artifact_raw.get("mode", "full-checkpoint"), "artifact.mode"
+    )
+    if artifact_mode not in {"full-checkpoint", "capsule"}:
+        raise BenchConfigError("artifact.mode must be full-checkpoint or capsule")
+    artifact_fallback = _require_text(
+        artifact_raw.get("fallback", "full-checkpoint"), "artifact.fallback"
+    )
+    if artifact_fallback not in {"full-checkpoint", "error"}:
+        raise BenchConfigError("artifact.fallback must be full-checkpoint or error")
+    exports = artifact_raw.get("exports", [])
+    if not isinstance(exports, list):
+        raise BenchConfigError("artifact.exports must be a list")
+    exports = [
+        _require_text(value, f"artifact.exports[{index}]")
+        for index, value in enumerate(exports)
+    ]
+    if len(set(exports)) != len(exports):
+        raise BenchConfigError("artifact.exports must not contain duplicates")
+    unsupported_exports = sorted(set(exports) - {"peft", "llama_cpp"})
+    if unsupported_exports:
+        raise BenchConfigError(
+            "artifact.exports contains unsupported values: " + ", ".join(unsupported_exports)
+        )
+    if exports and artifact_mode != "capsule":
+        raise BenchConfigError("artifact.exports requires artifact.mode: capsule")
+    max_low_rank = _require_positive_int(
+        artifact_raw.get("max_low_rank", 32), "artifact.max_low_rank"
+    )
+    if max_low_rank > 256:
+        raise BenchConfigError("artifact.max_low_rank may not exceed 256")
+    artifact = {
+        "mode": artifact_mode,
+        "require_exact": _require_bool(
+            artifact_raw.get("require_exact", True), "artifact.require_exact"
+        ),
+        "fallback": artifact_fallback,
+        "exports": exports,
+        "max_low_rank": max_low_rank,
+    }
+
     return SurgeryExperimentSpec(
         name=name,
         model=model,
@@ -346,6 +402,7 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
         prompts=prompts,
         output_root=output_root,
         gguf=gguf,
+        artifact=artifact,
         source_path=source_path,
     )
 
@@ -877,6 +934,7 @@ def _pipeline_arguments(
     checkpoint: Path,
     output_dir: Path,
     on_log: Callable[[str], None],
+    mutation_sink: MutationHintSink | None = None,
 ) -> dict[str, Any]:
     from abliteralus.prompts import BUILTIN_HARMFUL, BUILTIN_HARMLESS
 
@@ -891,6 +949,8 @@ def _pipeline_arguments(
         "on_log": on_log,
         **spec.pipeline,
     }
+    if mutation_sink is not None:
+        arguments["mutation_sink"] = mutation_sink
     if spec.prompts["jailbreak"]:
         arguments["jailbreak_prompts"] = list(BUILTIN_HARMFUL[: spec.prompts["jailbreak"]])
     return arguments
@@ -904,6 +964,8 @@ def run_experiment(
     skip_gguf: bool = False,
     offline: bool = False,
     pipeline_factory: Callable[..., Any] | None = None,
+    artifact_stage: ArtifactStage | None = None,
+    mutation_sink: MutationHintSink | None = None,
 ) -> Path:
     """Execute the full experiment and return its immutable run directory."""
     run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -973,6 +1035,7 @@ def run_experiment(
                 checkpoint=checkpoint,
                 output_dir=checkpoint_dir,
                 on_log=log,
+                mutation_sink=mutation_sink,
             )
         )
         saved_checkpoint = Path(pipeline.run()).resolve()
@@ -998,6 +1061,54 @@ def run_experiment(
             )
         elif spec.gguf_enabled:
             manifest["stages"]["gguf"] = {"status": "skipped", "reason": "--skip-gguf"}
+
+        if spec.capsule_enabled:
+            manifest["stages"]["artifact"] = {
+                "status": "running",
+                "started_at": _utc_now(),
+                "mode": "capsule",
+            }
+            _write_json(manifest_path, manifest)
+            if artifact_stage is None:
+                if spec.artifact["fallback"] == "error":
+                    raise RuntimeError(
+                        "capsule mode requires an artifact backend; run through lab-bench or "
+                        "surgery_artifacts.integration"
+                    )
+                artifact_result: dict[str, Any] = {
+                    "status": "fallback",
+                    "reason": "artifact backend unavailable",
+                    "checkpoint": str(saved_checkpoint),
+                }
+            else:
+                artifact_result = dict(
+                    artifact_stage(
+                        ArtifactStageContext(
+                            spec=spec,
+                            run_dir=run_dir,
+                            base_checkpoint=checkpoint,
+                            target_checkpoint=saved_checkpoint,
+                            manifest_path=manifest_path,
+                            mutation_hints=(
+                                mutation_sink.snapshot() if mutation_sink is not None else ()
+                            ),
+                        )
+                    )
+                )
+            artifact_status = artifact_result.pop("status", "complete")
+            manifest["stages"]["artifact"].update(
+                {
+                    "status": artifact_status,
+                    "ended_at": _utc_now(),
+                    **artifact_result,
+                }
+            )
+        else:
+            manifest["stages"]["artifact"] = {
+                "status": "complete",
+                "mode": "full-checkpoint",
+                "checkpoint": str(saved_checkpoint),
+            }
 
         manifest.update({"status": "complete", "ended_at": _utc_now()})
         _write_json(manifest_path, manifest)

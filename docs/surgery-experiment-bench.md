@@ -31,7 +31,7 @@ $env.HF_HOME = ((pwd) | path join .scratch cache huggingface)
 )
 
 (
-  uv run --frozen --extra gguf abliteralus-surgery run
+  lab-bench --config private/lab_bench/lab.local.toml local-surgery run
     --config experiments/surgery/local-qwen25-0.5b.yaml
 )
 ```
@@ -61,7 +61,12 @@ Each run writes:
 outputs/surgery/<experiment>/<run-id>/
   run-manifest.json
   surgery.log
-  hf/
+  artifact/
+    manifest.json
+    tensor-manifest.json
+    delta.safetensors
+    recipe.json
+    SHA256SUMS
   gguf/
     baseline.Q4_K_M.gguf
     surgery.Q4_K_M.gguf
@@ -69,6 +74,12 @@ outputs/surgery/<experiment>/<run-id>/
     *.convert.log
     *.quantize.log
 ```
+
+With `artifact.mode: capsule`, `hf/` is a temporary staging checkpoint. It is
+removed only after optional GGUF work and exact capsule validation complete. If
+capsule construction fails and `artifact.fallback` is `full-checkpoint`, `hf/`
+is retained and the run manifest records the fallback. Pickle, `.pt`, and other
+executable weight containers are never copied into a capsule.
 
 The manifest records the requested and resolved model revisions, config hash,
 repository state, preflight evidence, stage results, GGUF hashes, and raw A/B
@@ -114,7 +125,8 @@ The Lightning control plane separates infrequent runtime provisioning from each
 experiment launch. Provisioning:
 
 1. Verify that all tracked and untracked runtime inputs are committed.
-2. Build a deterministic bundle containing only `abliteralus/`, `pyproject.toml`,
+2. Build a deterministic bundle containing only `abliteralus/`, the exact
+   `private/surgery_artifacts/src/` implementation subtree, `pyproject.toml`,
    `uv.lock`, `README.md`, and the selected experiment YAML.
 3. Install pinned `uv` in an isolated, versioned tool environment.
 4. Materialize a dependency-only environment keyed by the exact lockfile hash
@@ -132,9 +144,10 @@ A normal surgery launch then:
    provisioned environment's Python. It does not install uv or run `uv sync`.
 4. Collects summary metadata by default and releases compute it started.
 
-The bundle explicitly excludes `.git/`, `private/`, `ci/`, tests, local caches,
-and unrelated worktree content. A dirty package or lockfile is rejected so a
-remote result cannot claim a commit that does not contain the executed code.
+The bundle explicitly excludes `.git/`, every other `private/` subtree, `ci/`,
+tests, local caches, and unrelated worktree content. A dirty allowlisted package
+or lockfile is rejected so a remote result cannot claim a commit that does not
+contain the executed code.
 Lightning profiles must use a remote-addressable `OWNER/MODEL` source; local
 checkpoint directories are never added to the upload bundle.
 
@@ -227,6 +240,7 @@ local allocation deadline and a remote compute lease:
     --allocation-retry 30
     --pending-policy adopt
     --max-runtime 14400
+    --collect capsule
 )
 ```
 
@@ -266,9 +280,45 @@ already-set local variable:
 Forwarded values are restored to their prior Studio state after the command,
 including when a run fails or reuses an already-running Studio.
 
-The default `--collect summary` downloads manifests and logs while leaving the
-large checkpoint on persistent Studio storage. `--collect all` downloads the
-whole output directory; `--collect none` leaves every artifact remote.
+The default `--collect summary` downloads manifests and logs. `--collect capsule`
+downloads the native capsule, validates every local checksum and semantic id,
+and records that verification in `lightning-result.json` before owned compute is
+released. `--collect all` downloads the whole output directory; `--collect none`
+leaves every artifact remote. Collection does not delete remote data and does not
+claim that a capsule has entered the durable local registry.
+
+## Capsule registry and rehydration
+
+The exact native capsule is the durable source of truth. Register it locally only
+after verification:
+
+```nu
+(
+  lab-bench --config private/lab_bench/lab.local.toml artifact register
+    outputs/lightning/RUN/artifact
+    --ref qwen25-7b/experiment-001
+)
+```
+
+Rehydration requires the exact base tensor identity recorded by the capsule and
+performs a second full tensor-hash pass after writing the checkpoint:
+
+```nu
+(
+  lab-bench --config private/lab_bench/lab.local.toml artifact rehydrate
+    qwen25-7b/experiment-001
+    --base D:/models/Qwen2.5-7B-Instruct
+    --output outputs/rehydrated/qwen25-7b-experiment-001
+)
+```
+
+Capsule v1 can encode replayable ABLITERALUS projections, sparse row/element
+updates, dense additions, and exact tensor replacement fallback. PEFT LoRA is a
+derived export only when every operation is additive and tolerance-verified;
+norm-preserving scale operations correctly remain native-only. A llama.cpp GGUF
+LoRA is derived through the official `convert_lora_to_gguf.py`, and its converter
+file hash and Git commit are recorded. Neither adapter format replaces the native
+exact capsule.
 
 The default persistent layout is:
 
@@ -285,9 +335,9 @@ $HOME/.abliteralus/
 ```
 
 The initial 7B profile deliberately leaves GGUF disabled. It proves the larger
-HF surgery lane without also provisioning a compiler and a pinned llama.cpp
-build. A remote GGUF lane should pin and preflight that toolchain before being
-used for cross-run comparisons.
+Safetensors surgery and capsule lane without also provisioning a compiler and a
+pinned llama.cpp build. A remote GGUF lane should pin and preflight that
+toolchain before being used for cross-run comparisons.
 
 Lightning's current SDK supports programmatic Studio start/stop, command
 execution, uploads, and downloads; see the official

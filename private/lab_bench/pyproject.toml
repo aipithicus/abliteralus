@@ -12,6 +12,7 @@ license = "LicenseRef-Proprietary"
 authors = [{ name = "Aipithicus Enterprises" }]
 dependencies = [
   "aipithicus-secret-manager",
+  "aipithicus-surgery-artifacts",
   "lightning-sdk==2026.8.18",
 ]
 
@@ -20,6 +21,7 @@ lab-bench = "lab_bench.cli:main"
 
 [tool.uv.sources]
 aipithicus-secret-manager = { workspace = true }
+aipithicus-surgery-artifacts = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]

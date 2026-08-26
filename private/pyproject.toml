@@ -1,10 +1,10 @@
 [tool.uv.workspace]
-members = ["secret_manager", "lab_bench"]
+members = ["secret_manager", "surgery_artifacts", "lab_bench"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra", "-p", "no:cacheprovider"]
-pythonpath = ["secret_manager/src", "lab_bench/src", ".."]
-testpaths = ["secret_manager/tests", "lab_bench/tests"]
+pythonpath = ["secret_manager/src", "surgery_artifacts/src", "lab_bench/src", ".."]
+testpaths = ["secret_manager/tests", "surgery_artifacts/tests", "lab_bench/tests"]
 
 [tool.ruff]
 line-length = 100

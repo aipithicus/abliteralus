@@ -57,6 +57,11 @@ class SshDefaults:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactDefaults:
+    registry: Path
+
+
+@dataclass(frozen=True, slots=True)
 class LabBenchConfig:
     path: Path
     repository: Path
@@ -64,6 +69,7 @@ class LabBenchConfig:
     secret_config: Path
     profiles: ProfileNames
     lightning: LightningDefaults
+    artifacts: ArtifactDefaults
     ssh: SshDefaults
     schema_version: int = 1
 
@@ -107,7 +113,16 @@ def parse_config(raw: Mapping[str, Any], *, path: Path | None = None) -> LabBenc
     table = _table(raw, "config")
     _unknown(
         table,
-        {"schema_version", "repository", "python", "secret_config", "profiles", "lightning", "ssh"},
+        {
+            "schema_version",
+            "repository",
+            "python",
+            "secret_config",
+            "profiles",
+            "lightning",
+            "artifacts",
+            "ssh",
+        },
         "config",
     )
     if table.get("schema_version") != 1:
@@ -119,6 +134,7 @@ def parse_config(raw: Mapping[str, Any], *, path: Path | None = None) -> LabBenc
     secret_config = _resolved_path(_string(table, "secret_config", "config"), base)
     profiles = _parse_profiles(_required_table(table, "profiles", "config"))
     lightning = _parse_lightning(_required_table(table, "lightning", "config"))
+    artifacts = _parse_artifacts(table.get("artifacts", {}), base, repository)
     ssh = _parse_ssh(_required_table(table, "ssh", "config"), base)
     return LabBenchConfig(
         path=config_path,
@@ -127,6 +143,7 @@ def parse_config(raw: Mapping[str, Any], *, path: Path | None = None) -> LabBenc
         secret_config=secret_config,
         profiles=profiles,
         lightning=lightning,
+        artifacts=artifacts,
         ssh=ssh,
     )
 
@@ -251,6 +268,24 @@ def _parse_ssh(table: Mapping[str, Any], base: Path) -> SshDefaults:
     identity_raw = _optional_string(table, "identity_file", "", "ssh")
     identity = _resolved_path(identity_raw, base) if identity_raw else None
     return SshDefaults(executable, destination, port, identity)
+
+
+def _parse_artifacts(
+    value: Any,
+    base: Path,
+    repository: Path,
+) -> ArtifactDefaults:
+    table = _table(value, "artifacts")
+    _unknown(table, {"registry"}, "artifacts")
+    raw = _optional_string(table, "registry", "outputs/artifact-registry", "artifacts")
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        registry = path.resolve()
+    elif "registry" in table:
+        registry = (base / path).resolve()
+    else:
+        registry = (repository / path).resolve()
+    return ArtifactDefaults(registry=registry)
 
 
 def _resolved_path(value: str, base: Path) -> Path:

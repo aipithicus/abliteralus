@@ -3,7 +3,8 @@
 `lab-bench` is a thin local control plane. It composes the public experiment code;
 it does not create a second surgery implementation.
 
-- Local surgery invokes `python -m abliteralus.surgery_bench`.
+- Local surgery runs through `surgery_artifacts.integration`, which composes the
+  public runner with the private artifact stage.
 - Remote surgery invokes `python -m abliteralus.lightning_surgery`.
 - Studio lifecycle, status, ports, and generic remote commands use Lightning's SDK.
 - Interactive shells use the system OpenSSH client and the existing OS SSH
@@ -20,7 +21,7 @@ enabled; this tool does not add permissive SSH options.
 From the ABLITERALUS repository root:
 
 ```text
-deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/lab_bench
+deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/surgery_artifacts --editable private/lab_bench
 ```
 
 This installs both console commands into the existing project venv; it does not
@@ -83,7 +84,7 @@ checks the exact provisioned runtime. A normal run never installs uv and never r
 `uv sync`; a missing or stale runtime fails with an instruction to provision it.
 
 ```text
-lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --collect summary
+lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --collect capsule
 ```
 
 For a dedicated single-controller H200 Studio, the non-secret policy can be kept in
@@ -109,7 +110,7 @@ responsibility for stopping it after the run. The safer shared-Studio default is
 Use both bounds for unattended work:
 
 ```text
-lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --max-runtime 14400 --collect summary
+lab-bench --config private/lab_bench/lab.local.toml lightning-surgery run --config experiments/example.yaml --max-runtime 14400 --collect capsule
 ```
 
 The command-line value overrides the configured four-hour surgery lease when a
@@ -121,6 +122,21 @@ allocation and remote-phase timing in `lightning-result.json`, and stops Pending
 Running compute it may have requested when startup times out or is interrupted.
 The remote lease remains the final bound if the local controller itself is killed
 too abruptly to perform API cleanup.
+
+## Durable surgery artifacts
+
+The `[artifacts]` config points at the local content-addressed registry. Lightning
+is compute and staging; it is not the durable store.
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml artifact verify outputs/lightning/RUN/artifact
+lab-bench --config private/lab_bench/lab.local.toml artifact register outputs/lightning/RUN/artifact --ref qwen25-7b/experiment-001
+lab-bench --config private/lab_bench/lab.local.toml artifact resolve qwen25-7b/experiment-001
+lab-bench --config private/lab_bench/lab.local.toml artifact rehydrate qwen25-7b/experiment-001 --base D:/models/Qwen2.5-7B-Instruct --output outputs/rehydrated/experiment-001
+```
+
+Registration validates the capsule before an immutable object is committed and
+updates refs atomically. Rehydration refuses a base whose tensor hashes differ.
 
 ## Studio lifecycle and brief inference
 

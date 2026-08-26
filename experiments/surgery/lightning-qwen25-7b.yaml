@@ -27,8 +27,17 @@ prompts:
 output:
   root: outputs/surgery
 
-# The first Lightning lane deliberately stops at a portable HF checkpoint.
-# Enable GGUF only after provisioning a pinned llama.cpp toolchain in the
-# Studio; the local mini profile exercises the complete conversion/A-B lane.
+# The exact capsule is the durable output. The temporary HF checkpoint remains
+# on Studio storage if capsule construction cannot complete.
+artifact:
+  mode: capsule
+  require_exact: true
+  fallback: full-checkpoint
+  exports: []
+  max_low_rank: 32
+
+# The first Lightning lane deliberately skips GGUF and retains the exact native
+# surgery capsule. Enable GGUF only after provisioning a pinned llama.cpp
+# toolchain in the Studio; the local mini profile exercises conversion/A-B.
 gguf:
   enabled: false

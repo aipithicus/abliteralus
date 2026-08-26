@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Sequence
 
 from secret_manager import SecretManager
+from surgery_artifacts import ArtifactRegistry, rehydrate_capsule, validate_capsule
 
 from .config import LabBenchConfig
 from .errors import LabBenchError
@@ -74,6 +75,7 @@ class LabBench:
                     self.config.lightning.inference_max_runtime_seconds
                 ),
             },
+            "artifacts": {"registry": str(self.config.artifacts.registry)},
             "ssh": {
                 "executable": self.config.ssh.executable,
                 "destination": self.config.ssh.destination,
@@ -88,7 +90,13 @@ class LabBench:
 
     def local_surgery(self, arguments: Sequence[str]) -> int:
         surgery_arguments = _arguments(arguments, "local-surgery requires a surgery command")
-        command = self._repository_python("abliteralus.surgery_bench", surgery_arguments)
+        module = (
+            "surgery_artifacts.integration"
+            if surgery_arguments[0] == "run"
+            else "abliteralus.surgery_bench"
+        )
+        command = self._repository_python(module, surgery_arguments)
+        environment = self._repository_environment()
         # Postprocessing, smoke tests, and explicitly offline runs do not need Hub access.
         # This conservative literal check can withhold Hub credentials if
         # ``--offline`` appears as another option's value. That safe-direction
@@ -98,9 +106,10 @@ class LabBench:
             return self.manager.run(
                 self.config.profiles.local_surgery,
                 command,
+                environ=environment,
                 cwd=self.config.repository,
             ).returncode
-        return self._direct(command)
+        return self._direct(command, environ=environment)
 
     def local_inference(self, command: Sequence[str]) -> int:
         child = _arguments(command, "local-inference requires a child command")
@@ -162,8 +171,47 @@ class LabBench:
         return self.manager.run(
             profile,
             command,
+            environ=self._repository_environment(),
             cwd=self.config.repository,
         ).returncode
+
+    def artifact_verify(self, capsule: str | Path) -> dict[str, object]:
+        validation = validate_capsule(capsule)
+        return {
+            "path": str(validation.path),
+            "surgery_id": validation.surgery_id,
+            "operation_count": validation.operation_count,
+            "file_count": validation.file_count,
+            "total_bytes": validation.total_bytes,
+        }
+
+    def artifact_register(
+        self,
+        capsule: str | Path,
+        *,
+        ref: str | None = None,
+    ) -> dict[str, object]:
+        entry = ArtifactRegistry(self.config.artifacts.registry).add(capsule, ref=ref)
+        return {
+            "surgery_id": entry.surgery_id,
+            "path": str(entry.path),
+            "ref": entry.ref,
+            "created": entry.created,
+        }
+
+    def artifact_resolve(self, name: str) -> Path:
+        return ArtifactRegistry(self.config.artifacts.registry).resolve(name)
+
+    def artifact_rehydrate(
+        self,
+        capsule_or_ref: str | Path,
+        *,
+        base: str | Path,
+        output: str | Path,
+    ) -> Path:
+        candidate = Path(capsule_or_ref).expanduser()
+        capsule = candidate.resolve() if candidate.is_dir() else self.artifact_resolve(str(capsule_or_ref))
+        return rehydrate_capsule(capsule, base, output)
 
     def studio_provision(
         self,
@@ -389,17 +437,32 @@ class LabBench:
             raise LabBenchError("configured ABLITERALUS Python executable is unavailable")
         return [str(self.config.python), "-m", module, *arguments]
 
-    def _direct(self, command: Sequence[str]) -> int:
+    def _direct(
+        self,
+        command: Sequence[str],
+        *,
+        environ: dict[str, str] | None = None,
+    ) -> int:
         try:
             completed = subprocess.run(
                 command,
                 cwd=self.config.repository,
+                env=environ,
                 check=False,
                 close_fds=True,
             )
         except OSError as error:
             raise LabBenchError("lab child command could not start") from error
         return completed.returncode
+
+    def _repository_environment(self) -> dict[str, str]:
+        environment = dict(os.environ)
+        source = self.config.repository / "private" / "surgery_artifacts" / "src"
+        existing = environment.get("PYTHONPATH", "")
+        environment["PYTHONPATH"] = (
+            str(source) if not existing else os.pathsep.join((str(source), existing))
+        )
+        return environment
 
 
 def _arguments(arguments: Sequence[str], message: str) -> list[str]:

@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 
 from secret_manager.errors import SecretManagerError
+from surgery_artifacts.errors import ArtifactError
 
 from . import __version__
 from .bench import LabBench
@@ -118,6 +119,20 @@ def _parser() -> argparse.ArgumentParser:
     ssh = commands.add_parser("ssh", help="open direct OpenSSH using the existing OS key or agent")
     ssh.add_argument("--destination")
     ssh.add_argument("remote_command", nargs=argparse.REMAINDER)
+
+    artifact = commands.add_parser("artifact", help="verify and manage durable surgery capsules")
+    artifact_commands = artifact.add_subparsers(dest="artifact_operation", required=True)
+    verify = artifact_commands.add_parser("verify")
+    verify.add_argument("capsule")
+    register = artifact_commands.add_parser("register")
+    register.add_argument("capsule")
+    register.add_argument("--ref")
+    resolve = artifact_commands.add_parser("resolve")
+    resolve.add_argument("name")
+    rehydrate = artifact_commands.add_parser("rehydrate")
+    rehydrate.add_argument("capsule_or_ref")
+    rehydrate.add_argument("--base", required=True)
+    rehydrate.add_argument("--output", required=True)
     return parser
 
 
@@ -149,6 +164,7 @@ def _print_inventory(payload: dict) -> None:
     )
     ssh = payload["ssh"]
     print(f"SSH: {ssh['destination'] or 'not configured'}")
+    print(f"artifact registry: {payload['artifacts']['registry']}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -172,6 +188,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             return bench.with_secrets(args.profile, args.child_command)
         if args.command_name == "ssh":
             return bench.ssh(args.remote_command, destination=args.destination)
+        if args.command_name == "artifact":
+            if args.artifact_operation == "verify":
+                print(json.dumps(bench.artifact_verify(args.capsule), indent=2, sort_keys=True))
+                return 0
+            if args.artifact_operation == "register":
+                print(
+                    json.dumps(
+                        bench.artifact_register(args.capsule, ref=args.ref),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 0
+            if args.artifact_operation == "resolve":
+                print(bench.artifact_resolve(args.name))
+                return 0
+            if args.artifact_operation == "rehydrate":
+                print(
+                    bench.artifact_rehydrate(
+                        args.capsule_or_ref,
+                        base=args.base,
+                        output=args.output,
+                    )
+                )
+                return 0
         if args.command_name == "studio":
             if args.studio_operation == "status":
                 return bench.studio_status()
@@ -216,7 +257,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             if args.studio_operation == "ports":
                 return bench.studio_ports(args.add)
-    except (LabBenchError, SecretManagerError) as error:
+    except (ArtifactError, LabBenchError, OSError, SecretManagerError, ValueError) as error:
         print(f"lab-bench: {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

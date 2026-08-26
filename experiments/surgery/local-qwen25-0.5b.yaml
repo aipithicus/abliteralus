@@ -27,6 +27,13 @@ prompts:
 output:
   root: outputs/surgery
 
+artifact:
+  mode: capsule
+  require_exact: true
+  fallback: full-checkpoint
+  exports: []
+  max_low_rank: 32
+
 gguf:
   enabled: true
   compare_baseline: true
