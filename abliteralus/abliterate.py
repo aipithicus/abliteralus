@@ -67,6 +67,7 @@ def _has_fused_quant_scale(container: nn.Module, name: str) -> bool:
 dev.configure_cuda_alloc()
 
 from abliteralus.models.loader import ModelHandle, load_model  # noqa: E402
+from abliteralus.chat_templates import render_chat_prompt  # noqa: E402
 from abliteralus.models.offload_surgery import (  # noqa: E402
     LogicalParameterTransaction,
     OffloadSurgeryError,
@@ -845,6 +846,7 @@ class AbliterationPipeline:
         # Verify stage sample size
         verify_sample_size: int | None = None,
         refusal_max_tokens: int | None = None,
+        skip_standard_verify: bool = False,
         on_stage: Callable[[StageResult], None] | None = None,
         on_log: Callable[[str], None] | None = None,
         mutation_sink: MutationHintSink | None = None,
@@ -992,6 +994,9 @@ class AbliterationPipeline:
         ):
             raise ValueError("refusal_max_tokens must be a positive integer")
         self.refusal_max_tokens = refusal_max_tokens if refusal_max_tokens is not None else 128
+        if not isinstance(skip_standard_verify, bool):
+            raise ValueError("skip_standard_verify must be a boolean")
+        self.skip_standard_verify = skip_standard_verify
 
         # Large model mode: conservative defaults for 120B+ models.
         # Reduces memory footprint by limiting SAE features, directions,
@@ -1306,7 +1311,17 @@ class AbliterationPipeline:
         with capture_mutation_hints(self._mutation_sink):
             self._excise()
         self._free_gpu_memory()
-        self._verify()
+        if self.skip_standard_verify:
+            self.log("Skipping standard chat-completion verification; using external evaluation.")
+            self._quality_metrics["standard_verification_skipped"] = True
+            self._emit(
+                "verify",
+                "done",
+                "Standard verification skipped for external evaluation",
+                skipped=True,
+            )
+        else:
+            self._verify()
         self._free_gpu_memory()
         return self._rebirth()
 
@@ -1482,28 +1497,11 @@ class AbliterationPipeline:
             self.log("  Chat template requested but tokenizer has no apply_chat_template; using raw prompts")
             return prompts
 
-        def _apply_chat_template_no_think(conv):
-            """Apply chat template, disabling Qwen thinking mode when supported.
-
-            Qwen3.x chat templates may otherwise default into thinking mode; short
-            verification generations can become mostly <think> scaffolding, which
-            makes refusal/coherence metrics look degenerate rather than measuring
-            the assistant answer. Non-Qwen tokenizers ignore/raise on the extra
-            kwarg, so fall back to the standard call.
-            """
-            try:
-                return tokenizer.apply_chat_template(
-                    conv, tokenize=False, add_generation_prompt=True, enable_thinking=False
-                )
-            except TypeError:
-                return tokenizer.apply_chat_template(
-                    conv, tokenize=False, add_generation_prompt=True
-                )
-
         try:
-            # Test if the tokenizer actually has a chat template configured
-            test_msgs = [{"role": "user", "content": "test"}]
-            _apply_chat_template_no_think(test_msgs)
+            # Test both common message content representations. In particular,
+            # Llama Guard requires typed text blocks and can otherwise render an
+            # empty conversation without raising.
+            render_chat_prompt(tokenizer, "test")
         except Exception:
             self.log("  Chat template not configured for this model; using raw prompts")
             return prompts
@@ -1511,25 +1509,20 @@ class AbliterationPipeline:
         n = len(prompts)
         self.log(f"  Wrapping {n} prompts with chat template")
 
-        # Try batch application first (single call, much faster for large sets)
-        all_conversations = [[{"role": "user", "content": p}] for p in prompts]
         try:
-            wrapped = [
-                _apply_chat_template_no_think(conv)
-                for conv in all_conversations
-            ]
+            wrapped = [render_chat_prompt(tokenizer, prompt) for prompt in prompts]
             self.log(f"    chat template {n}/{n}")
             return wrapped
         except Exception:
             pass  # Fall through to per-prompt with error handling
 
         wrapped = []
-        for i, conv in enumerate(all_conversations):
+        for prompt in prompts:
             try:
-                text = _apply_chat_template_no_think(conv)
+                text = render_chat_prompt(tokenizer, prompt)
                 wrapped.append(text)
             except Exception:
-                wrapped.append(prompts[i])  # fallback to raw if individual prompt fails
+                wrapped.append(prompt)  # fallback to raw if individual prompt fails
         self.log(f"    chat template {n}/{n}")
         return wrapped
 
@@ -6980,6 +6973,7 @@ class AbliterationPipeline:
                 "refinement_passes": self.refinement_passes,
                 "project_biases": self.project_biases,
                 "use_chat_template": self.use_chat_template,
+                "skip_standard_verify": self.skip_standard_verify,
                 "use_whitened_svd": self.use_whitened_svd,
                 "true_iterative_refinement": self.true_iterative_refinement,
                 # Heretic-inspired enhancements

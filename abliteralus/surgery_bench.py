@@ -8,6 +8,7 @@ surgery format.
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import importlib.util
 import json
@@ -46,6 +47,7 @@ _ALLOWED_TOP_LEVEL = {
     "output",
     "gguf",
     "artifact",
+    "evaluation",
 }
 _ALLOWED_MODEL = {
     "source",
@@ -77,6 +79,7 @@ _ALLOWED_PIPELINE = {
     "max_layer_fraction",
     "projection_target",
     "projection_row_fraction",
+    "skip_standard_verify",
 }
 _ALLOWED_PROMPTS = {"harmful", "harmless", "jailbreak"}
 _ALLOWED_OUTPUT = {"root"}
@@ -94,6 +97,15 @@ _ALLOWED_GGUF = {
     "smoke_prompts",
 }
 _ALLOWED_ARTIFACT = {"mode", "require_exact", "fallback", "exports", "max_low_rank"}
+_ALLOWED_EVALUATION = {
+    "enabled",
+    "mode",
+    "safe_label",
+    "unsafe_label",
+    "max_new_tokens",
+    "cases",
+}
+_ALLOWED_EVALUATION_CASE = {"name", "prompt", "expected"}
 
 
 class BenchConfigError(ValueError):
@@ -173,6 +185,7 @@ def _validate_pipeline(raw: dict[str, Any]) -> dict[str, Any]:
         "use_whitened_svd",
         "true_iterative_refinement",
         "large_model_mode",
+        "skip_standard_verify",
     ):
         if key in pipeline:
             pipeline[key] = _require_bool(pipeline[key], f"pipeline.{key}")
@@ -237,6 +250,7 @@ class SurgeryExperimentSpec:
     output_root: str
     gguf: dict[str, Any]
     artifact: dict[str, Any]
+    evaluation: dict[str, Any]
     source_path: Path
 
     @property
@@ -246,6 +260,10 @@ class SurgeryExperimentSpec:
     @property
     def capsule_enabled(self) -> bool:
         return self.artifact["mode"] == "capsule"
+
+    @property
+    def evaluation_enabled(self) -> bool:
+        return bool(self.evaluation["enabled"])
 
 
 def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
@@ -395,6 +413,72 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
         "max_low_rank": max_low_rank,
     }
 
+    evaluation_raw = _require_mapping(raw.get("evaluation", {}), "evaluation")
+    _reject_unknown(evaluation_raw, _ALLOWED_EVALUATION, "evaluation")
+    evaluation_enabled = _require_bool(
+        evaluation_raw.get("enabled", False), "evaluation.enabled"
+    )
+    evaluation_mode = _require_text(
+        evaluation_raw.get("mode", "safety-label"), "evaluation.mode"
+    )
+    if evaluation_mode != "safety-label":
+        raise BenchConfigError("evaluation.mode must be safety-label")
+    safe_label = _require_text(
+        evaluation_raw.get("safe_label", "safe"), "evaluation.safe_label"
+    )
+    unsafe_label = _require_text(
+        evaluation_raw.get("unsafe_label", "unsafe"), "evaluation.unsafe_label"
+    )
+    if safe_label.casefold() == unsafe_label.casefold():
+        raise BenchConfigError("evaluation safe and unsafe labels must differ")
+    cases_raw = evaluation_raw.get("cases", [])
+    if not isinstance(cases_raw, list):
+        raise BenchConfigError("evaluation.cases must be a list")
+    cases: list[dict[str, str]] = []
+    for index, value in enumerate(cases_raw):
+        case = _require_mapping(value, f"evaluation.cases[{index}]")
+        _reject_unknown(case, _ALLOWED_EVALUATION_CASE, f"evaluation.cases[{index}]")
+        case_name = _require_text(case.get("name"), f"evaluation.cases[{index}].name")
+        if _NAME.fullmatch(case_name) is None:
+            raise BenchConfigError(
+                f"evaluation.cases[{index}].name contains unsupported characters"
+            )
+        expected = _require_text(
+            case.get("expected"), f"evaluation.cases[{index}].expected"
+        ).casefold()
+        if expected not in {"safe", "unsafe"}:
+            raise BenchConfigError(
+                f"evaluation.cases[{index}].expected must be safe or unsafe"
+            )
+        cases.append(
+            {
+                "name": case_name,
+                "prompt": _require_text(
+                    case.get("prompt"), f"evaluation.cases[{index}].prompt"
+                ),
+                "expected": expected,
+            }
+        )
+    case_names = [case["name"] for case in cases]
+    if len(set(case_names)) != len(case_names):
+        raise BenchConfigError("evaluation case names must be unique")
+    if evaluation_enabled and not cases:
+        raise BenchConfigError("enabled evaluation requires at least one case")
+    evaluation = {
+        "enabled": evaluation_enabled,
+        "mode": evaluation_mode,
+        "safe_label": safe_label,
+        "unsafe_label": unsafe_label,
+        "max_new_tokens": _require_positive_int(
+            evaluation_raw.get("max_new_tokens", 16), "evaluation.max_new_tokens"
+        ),
+        "cases": cases,
+    }
+    if pipeline.get("skip_standard_verify", False) and not evaluation_enabled:
+        raise BenchConfigError(
+            "pipeline.skip_standard_verify requires an enabled external evaluation"
+        )
+
     return SurgeryExperimentSpec(
         name=name,
         model=model,
@@ -403,6 +487,7 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
         output_root=output_root,
         gguf=gguf,
         artifact=artifact,
+        evaluation=evaluation,
         source_path=source_path,
     )
 
@@ -820,12 +905,31 @@ def _extract_llama_completion(stdout: str, prompt: str) -> tuple[str, str]:
     return completion.strip(), "conversation-marker"
 
 
+def _gguf_evaluation_cases(spec: SurgeryExperimentSpec) -> list[dict[str, str | None]]:
+    if spec.evaluation_enabled:
+        return [dict(case) for case in spec.evaluation["cases"]]
+    return [
+        {"name": None, "prompt": prompt, "expected": None}
+        for prompt in spec.gguf["smoke_prompts"]
+    ]
+
+
+def _gguf_evaluation_summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows or not any("verdict" in row for row in rows):
+        return None
+    from abliteralus.safety_evaluation import summarize_safety_rows
+
+    return summarize_safety_rows(rows)
+
+
 def _llama_completion(
     model: Path,
     prompt: str,
     *,
     spec: SurgeryExperimentSpec,
     tools: GGUFTools,
+    case_name: str | None = None,
+    expected: str | None = None,
 ) -> dict[str, Any]:
     if not tools.llama_cli:
         raise RuntimeError("llama-cli disappeared after preflight")
@@ -864,11 +968,28 @@ def _llama_completion(
     completion, parse_mode = _extract_llama_completion(result.stdout, prompt)
     refused = None
     refusal_reason = None
+    safety_result: dict[str, Any] = {}
     if result.returncode == 0:
-        from abliteralus.evaluation.advanced_metrics import _is_refusal_detailed
+        if spec.evaluation_enabled:
+            from abliteralus.safety_evaluation import parse_safety_completion
 
-        refused, refusal_reason = _is_refusal_detailed(completion, mode="combined")
+            safety_result = parse_safety_completion(
+                completion,
+                safe_label=spec.evaluation["safe_label"],
+                unsafe_label=spec.evaluation["unsafe_label"],
+            )
+            safety_result["expected"] = expected
+            safety_result["correct"] = (
+                safety_result["verdict"] == expected
+                if expected is not None and safety_result["verdict"] is not None
+                else None
+            )
+        else:
+            from abliteralus.evaluation.advanced_metrics import _is_refusal_detailed
+
+            refused, refusal_reason = _is_refusal_detailed(completion, mode="combined")
     return {
+        "name": case_name,
         "prompt": prompt,
         "completion": completion,
         "completion_parse": parse_mode,
@@ -877,6 +998,7 @@ def _llama_completion(
         "refusal_reason": refusal_reason,
         "exit_code": result.returncode,
         "stderr": result.stderr.strip(),
+        **safety_result,
     }
 
 
@@ -907,12 +1029,25 @@ def _run_gguf_stage(
         tools=tools,
     )
 
+    cases = _gguf_evaluation_cases(spec)
     evaluations: dict[str, list[dict[str, Any]]] = {}
     for label, model in models.items():
         evaluations[label] = [
-            _llama_completion(model, prompt, spec=spec, tools=tools)
-            for prompt in spec.gguf["smoke_prompts"]
+            _llama_completion(
+                model,
+                str(case["prompt"]),
+                spec=spec,
+                tools=tools,
+                case_name=case["name"],
+                expected=case["expected"],
+            )
+            for case in cases
         ]
+    summaries = {
+        label: summary
+        for label, rows in evaluations.items()
+        if (summary := _gguf_evaluation_summary(rows)) is not None
+    }
     result = {
         "models": {
             label: {
@@ -923,6 +1058,7 @@ def _run_gguf_stage(
             for label, path in models.items()
         },
         "evaluations": evaluations,
+        "evaluation_summaries": summaries,
     }
     _write_json(directory / "smoke-results.json", result)
     return result
@@ -956,6 +1092,17 @@ def _pipeline_arguments(
     return arguments
 
 
+def _release_accelerator_cache() -> None:
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # pragma: no cover - best-effort cleanup after a completed stage
+        pass
+
+
 def run_experiment(
     spec: SurgeryExperimentSpec,
     *,
@@ -966,6 +1113,7 @@ def run_experiment(
     pipeline_factory: Callable[..., Any] | None = None,
     artifact_stage: ArtifactStage | None = None,
     mutation_sink: MutationHintSink | None = None,
+    evaluation_runner: Callable[..., dict[str, Any]] | None = None,
 ) -> Path:
     """Execute the full experiment and return its immutable run directory."""
     run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -1046,6 +1194,50 @@ def run_experiment(
                 "checkpoint": str(saved_checkpoint),
             }
         )
+        del pipeline
+        _release_accelerator_cache()
+
+        if spec.evaluation_enabled:
+            manifest["stages"]["evaluation"] = {
+                "status": "running",
+                "started_at": _utc_now(),
+                "mode": spec.evaluation["mode"],
+            }
+            _write_json(manifest_path, manifest)
+            if evaluation_runner is None:
+                from abliteralus.safety_evaluation import evaluate_safety_ab
+
+                evaluation_runner = evaluate_safety_ab
+            evaluation_result = dict(
+                evaluation_runner(
+                    checkpoint,
+                    saved_checkpoint,
+                    cases=spec.evaluation["cases"],
+                    device=spec.model["device"],
+                    dtype=spec.model["dtype"],
+                    trust_remote_code=spec.model["trust_remote_code"],
+                    max_new_tokens=spec.evaluation["max_new_tokens"],
+                    safe_label=spec.evaluation["safe_label"],
+                    unsafe_label=spec.evaluation["unsafe_label"],
+                )
+            )
+            evaluation_path = run_dir / "evaluation" / "hf-results.json"
+            _write_json(evaluation_path, evaluation_result)
+            model_results = _require_mapping(
+                evaluation_result.get("models"), "evaluation result models"
+            )
+            summaries = {
+                label: _require_mapping(result, f"evaluation result {label}").get("summary")
+                for label, result in model_results.items()
+            }
+            manifest["stages"]["evaluation"].update(
+                {
+                    "status": "complete",
+                    "ended_at": _utc_now(),
+                    "results": str(evaluation_path),
+                    "summaries": summaries,
+                }
+            )
 
         if spec.gguf_enabled and not skip_gguf:
             manifest["stages"]["gguf"] = {"status": "running", "started_at": _utc_now()}
@@ -1244,12 +1436,25 @@ def reevaluate_gguf_experiment(
         raise RuntimeError("preflight failed: " + "; ".join(report["failures"]))
     tools = discover_gguf_tools(spec)
     started_at = _utc_now()
+    cases = _gguf_evaluation_cases(spec)
     evaluations = {
         label: [
-            _llama_completion(model, prompt, spec=spec, tools=tools)
-            for prompt in spec.gguf["smoke_prompts"]
+            _llama_completion(
+                model,
+                str(case["prompt"]),
+                spec=spec,
+                tools=tools,
+                case_name=case["name"],
+                expected=case["expected"],
+            )
+            for case in cases
         ]
         for label, model in models.items()
+    }
+    summaries = {
+        label: summary
+        for label, rows in evaluations.items()
+        if (summary := _gguf_evaluation_summary(rows)) is not None
     }
     result = {
         "models": {
@@ -1261,6 +1466,7 @@ def reevaluate_gguf_experiment(
             for label, path in models.items()
         },
         "evaluations": evaluations,
+        "evaluation_summaries": summaries,
     }
     _write_json(directory / "smoke-results.json", result)
 

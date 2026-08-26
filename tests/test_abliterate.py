@@ -182,6 +182,7 @@ class TestPipelineInit:
         assert pipeline.trust_remote_code is False
         assert pipeline.gpu_memory_utilization is None
         assert pipeline.refusal_max_tokens == 128
+        assert pipeline.skip_standard_verify is False
         assert pipeline.handle is None
 
     @pytest.mark.parametrize("invalid", [0, -1, 1.5, True])
@@ -196,6 +197,44 @@ class TestPipelineInit:
             model_name="test-model", refusal_max_tokens=512,
         )
         assert pipeline.refusal_max_tokens == 512
+
+    def test_external_evaluation_can_skip_standard_verification(self):
+        pipeline = AbliterationPipeline(
+            model_name="test-model",
+            skip_standard_verify=True,
+        )
+
+        assert pipeline.skip_standard_verify is True
+
+    def test_skip_standard_verify_must_be_boolean(self):
+        with pytest.raises(ValueError, match="skip_standard_verify must be a boolean"):
+            AbliterationPipeline(model_name="test-model", skip_standard_verify=1)
+
+    def test_external_evaluation_skip_bypasses_standard_verifier(self, monkeypatch, tmp_path):
+        pipeline = AbliterationPipeline(
+            model_name="test-model",
+            harmful_prompts=["harmful"],
+            harmless_prompts=["harmless"],
+            skip_standard_verify=True,
+        )
+        for method in (
+            "_summon",
+            "_probe",
+            "_distill",
+            "_capture_baseline_kl_logits",
+            "_excise",
+            "_free_gpu_memory",
+        ):
+            monkeypatch.setattr(pipeline, method, lambda: None)
+        monkeypatch.setattr(
+            pipeline,
+            "_verify",
+            lambda: pytest.fail("standard verification should have been skipped"),
+        )
+        monkeypatch.setattr(pipeline, "_rebirth", lambda: tmp_path)
+
+        assert pipeline.run() == tmp_path
+        assert pipeline._quality_metrics["standard_verification_skipped"] is True
 
     @pytest.mark.parametrize(
         "invalid", [0, -0.1, 1.1, float("nan"), float("inf"), True, "0.8"],

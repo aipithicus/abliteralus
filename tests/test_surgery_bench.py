@@ -27,8 +27,10 @@ def _write_config(
     tmp_path: Path,
     *,
     model_source: str | None = None,
+    pipeline: dict | None = None,
     gguf: dict | None = None,
     artifact: dict | None = None,
+    evaluation: dict | None = None,
 ) -> Path:
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir(exist_ok=True)
@@ -43,11 +45,12 @@ def _write_config(
                     "device": "cpu",
                     "dtype": "float32",
                 },
-                "pipeline": {"method": "basic", "n_directions": 1},
+                "pipeline": pipeline or {"method": "basic", "n_directions": 1},
                 "prompts": {"harmful": 3, "harmless": 2, "jailbreak": 0},
                 "output": {"root": str(tmp_path / "outputs")},
                 "gguf": gguf or {"enabled": False},
                 "artifact": artifact or {"mode": "full-checkpoint"},
+                "evaluation": evaluation or {"enabled": False},
             },
             sort_keys=False,
         ),
@@ -59,12 +62,18 @@ def _write_config(
 def test_checked_in_profiles_are_valid_and_pin_model_revisions():
     repo = Path(__file__).resolve().parents[1]
     local = load_experiment_spec(repo / "experiments/surgery/local-qwen25-0.5b.yaml")
+    guard = load_experiment_spec(repo / "experiments/surgery/local-llama-guard-3-1b.yaml")
     remote = load_experiment_spec(repo / "experiments/surgery/lightning-qwen25-7b.yaml")
 
     assert local.model["revision"] == "c89bee90d9f811437d9735454613c35b4a3c4dc8"
     assert local.gguf_enabled is True
     assert local.gguf["compare_baseline"] is True
     assert local.capsule_enabled is True
+    assert guard.model["revision"] == "acf7aafa60f0410f8f42b1fa35e077d705892029"
+    assert guard.evaluation_enabled is True
+    assert guard.pipeline["use_chat_template"] is True
+    assert guard.pipeline["skip_standard_verify"] is True
+    assert len(guard.evaluation["cases"]) == 8
     assert remote.model["revision"] == "a09a35458c702b33eeacc393d103063234e8bc28"
     assert remote.gguf_enabled is False
     assert remote.capsule_enabled is True
@@ -86,6 +95,26 @@ def test_unknown_pipeline_key_is_rejected(tmp_path):
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
     with pytest.raises(BenchConfigError, match="unknown pipeline keys"):
+        load_experiment_spec(path)
+
+
+def test_enabled_safety_evaluation_requires_cases(tmp_path):
+    path = _write_config(
+        tmp_path,
+        evaluation={"enabled": True, "mode": "safety-label", "cases": []},
+    )
+
+    with pytest.raises(BenchConfigError, match="requires at least one case"):
+        load_experiment_spec(path)
+
+
+def test_standard_verification_can_only_be_skipped_for_external_evaluation(tmp_path):
+    path = _write_config(
+        tmp_path,
+        pipeline={"method": "basic", "skip_standard_verify": True},
+    )
+
+    with pytest.raises(BenchConfigError, match="requires an enabled external evaluation"):
         load_experiment_spec(path)
 
 
@@ -153,6 +182,64 @@ def test_run_records_manifest_and_enforces_prompt_limits(tmp_path):
     assert len(captured["harmful_prompts"]) == 3
     assert len(captured["harmless_prompts"]) == 2
     assert captured["model_name"] == str((tmp_path / "checkpoint").resolve())
+
+
+def test_run_records_external_safety_evaluation_before_artifact_stage(tmp_path):
+    spec = load_experiment_spec(
+        _write_config(
+            tmp_path,
+            pipeline={"method": "basic", "skip_standard_verify": True},
+            evaluation={
+                "enabled": True,
+                "mode": "safety-label",
+                "cases": [
+                    {"name": "unsafe-one", "prompt": "unsafe prompt", "expected": "unsafe"},
+                    {"name": "safe-one", "prompt": "safe prompt", "expected": "safe"},
+                ],
+            },
+        )
+    )
+    captured: dict = {}
+
+    class FakePipeline:
+        def __init__(self, **kwargs):
+            captured["pipeline"] = kwargs
+            self.output_dir = Path(kwargs["output_dir"])
+
+        def run(self):
+            self.output_dir.mkdir(parents=True)
+            return self.output_dir
+
+    def evaluate(baseline, surgery, **kwargs):
+        captured["evaluation"] = {
+            "baseline": baseline,
+            "surgery": surgery,
+            **kwargs,
+        }
+        return {
+            "mode": "safety-label",
+            "models": {
+                "baseline": {"summary": {"accuracy": 1.0}},
+                "surgery": {"summary": {"accuracy": 0.5}},
+            },
+        }
+
+    run_dir = run_experiment(
+        spec,
+        run_id="evaluation-run",
+        pipeline_factory=FakePipeline,
+        evaluation_runner=evaluate,
+    )
+
+    manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
+    results = json.loads((run_dir / "evaluation/hf-results.json").read_text(encoding="utf-8"))
+    assert manifest["stages"]["evaluation"]["status"] == "complete"
+    assert manifest["stages"]["evaluation"]["summaries"]["baseline"]["accuracy"] == 1.0
+    assert results["models"]["surgery"]["summary"]["accuracy"] == 0.5
+    assert captured["pipeline"]["skip_standard_verify"] is True
+    assert captured["evaluation"]["cases"] == spec.evaluation["cases"]
+    assert captured["evaluation"]["baseline"] == (tmp_path / "checkpoint").resolve()
+    assert captured["evaluation"]["surgery"] == run_dir / "hf"
 
 
 def test_capsule_stage_receives_mutation_hints_before_run_is_finalized(tmp_path):
@@ -356,6 +443,63 @@ def test_gguf_stage_records_same_prompt_ab_and_hashes(tmp_path, monkeypatch):
     ]
     assert len(result["models"]["baseline"]["sha256"]) == 64
     assert (tmp_path / "run/gguf/smoke-results.json").is_file()
+
+
+def test_gguf_stage_reuses_labelled_safety_cases(tmp_path, monkeypatch):
+    spec = load_experiment_spec(
+        _write_config(
+            tmp_path,
+            gguf={"enabled": True, "compare_baseline": True},
+            evaluation={
+                "enabled": True,
+                "mode": "safety-label",
+                "cases": [
+                    {"name": "unsafe-one", "prompt": "unsafe prompt", "expected": "unsafe"},
+                    {"name": "safe-one", "prompt": "safe prompt", "expected": "safe"},
+                ],
+            },
+        )
+    )
+    monkeypatch.setattr(
+        bench, "discover_gguf_tools", lambda _spec: bench.GGUFTools(None, None, None, None)
+    )
+
+    def fake_convert(_checkpoint, *, label, directory, **_kwargs):
+        output = directory / f"{label}.gguf"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(label.encode("utf-8"))
+        return output
+
+    def fake_completion(_model, prompt, *, case_name, expected, **_kwargs):
+        return {
+            "name": case_name,
+            "prompt": prompt,
+            "expected": expected,
+            "verdict": expected,
+            "correct": True,
+            "unsafe_minus_safe_logit_margin": None,
+        }
+
+    monkeypatch.setattr(bench, "_convert_checkpoint", fake_convert)
+    monkeypatch.setattr(bench, "_llama_completion", fake_completion)
+    baseline = tmp_path / "baseline"
+    surgery = tmp_path / "surgery"
+    baseline.mkdir()
+    surgery.mkdir()
+
+    result = bench._run_gguf_stage(
+        baseline,
+        surgery,
+        run_dir=tmp_path / "run",
+        spec=spec,
+    )
+
+    assert [row["name"] for row in result["evaluations"]["baseline"]] == [
+        "unsafe-one",
+        "safe-one",
+    ]
+    assert result["evaluation_summaries"]["baseline"]["accuracy"] == 1.0
+    assert result["evaluation_summaries"]["surgery"]["by_expected"]["safe"]["accuracy"] == 1.0
 
 
 def test_skip_gguf_is_recorded_without_requiring_tools(tmp_path):

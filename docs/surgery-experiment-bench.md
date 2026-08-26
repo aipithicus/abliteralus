@@ -41,6 +41,37 @@ disk for the source snapshot, operated checkpoint, temporary float GGUFs, and
 the two final quantized GGUFs. The runner removes float GGUF intermediates only
 after quantization succeeds.
 
+### Llama Guard safety-label lane
+
+`experiments/surgery/local-llama-guard-3-1b.yaml` pins the full-precision
+`meta-llama/Llama-Guard-3-1B` Safetensors checkpoint. The Hugging Face account
+behind `HF_TOKEN` must first be granted access to the gated repository. Surgery
+uses eight built-in harmful/harmless pairs; evaluation uses a separate set of
+four unsafe and four safe prompts.
+
+Llama Guard's chat template requires typed text-content blocks. The shared chat
+renderer validates that the rendered conversation still contains the source
+prompt and falls back between plain and typed content representations. The
+profile skips the ordinary assistant-coherence/refusal verifier and instead
+loads the untouched and operated checkpoints sequentially, recording generated
+verdicts and the first-token `unsafe - safe` logit margin in
+`evaluation/hf-results.json`. This keeps peak VRAM bounded to one evaluated model.
+
+Run the HF surgery/evaluation/capsule lane without waiting for llama.cpp tooling:
+
+```nu
+(
+  lab-bench --config private/lab_bench/lab.local.toml local-surgery run
+    --config experiments/surgery/local-llama-guard-3-1b.yaml
+    --skip-gguf
+)
+```
+
+The full command omits `--skip-gguf`; its GGUF smoke stage reuses the labelled
+cases and records per-class summaries. A shift in unsafe verdicts is exploratory
+evidence only. A valid result must also preserve safe controls and avoid a global
+or unparsable-label collapse.
+
 Tool discovery checks, in order, explicit YAML paths, the
 `ABLITERALUS_LLAMA_*` environment variables, `LLAMA_CPP_ROOT`, executable paths,
 and nearby `llama.cpp` source directories. Useful overrides are:
@@ -61,6 +92,8 @@ Each run writes:
 outputs/surgery/<experiment>/<run-id>/
   run-manifest.json
   surgery.log
+  evaluation/
+    hf-results.json
   artifact/
     manifest.json
     tensor-manifest.json
