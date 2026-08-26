@@ -70,9 +70,7 @@ def summarize_safety_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "correct": correct,
         "accuracy": correct / len(scored_rows) if scored_rows else None,
         "by_expected": by_expected,
-        "mean_unsafe_minus_safe_logit_margin": (
-            sum(margins) / len(margins) if margins else None
-        ),
+        "mean_unsafe_minus_safe_logit_margin": (sum(margins) / len(margins) if margins else None),
     }
 
 
@@ -99,7 +97,7 @@ def evaluate_safety_checkpoint(
     safe_label: str,
     unsafe_label: str,
 ) -> dict[str, Any]:
-    """Generate deterministic verdicts and first-token label margins."""
+    """Generate deterministic verdicts and emitted-label logit margins."""
 
     from abliteralus.models.loader import load_model
 
@@ -145,19 +143,23 @@ def evaluate_safety_checkpoint(
                 unsafe_label=unsafe_label,
             )
             margin = None
-            if (
-                safe_token_id is not None
-                and unsafe_token_id is not None
-                and generated.scores
-            ):
-                first_scores = generated.scores[0][0]
-                margin = float(
-                    (first_scores[unsafe_token_id] - first_scores[safe_token_id])
-                    .detach()
-                    .float()
-                    .cpu()
-                    .item()
-                )
+            label_token_index = None
+            if safe_token_id is not None and unsafe_token_id is not None and generated.scores:
+                for index, token_id in enumerate(completion_ids.tolist()):
+                    if token_id not in {safe_token_id, unsafe_token_id}:
+                        continue
+                    if index >= len(generated.scores):
+                        break
+                    label_scores = generated.scores[index][0]
+                    margin = float(
+                        (label_scores[unsafe_token_id] - label_scores[safe_token_id])
+                        .detach()
+                        .float()
+                        .cpu()
+                        .item()
+                    )
+                    label_token_index = index
+                    break
             expected = str(case["expected"])
             rows.append(
                 {
@@ -169,6 +171,7 @@ def evaluate_safety_checkpoint(
                     "correct": (
                         parsed["verdict"] == expected if parsed["verdict"] is not None else False
                     ),
+                    "label_token_index": label_token_index,
                     "unsafe_minus_safe_logit_margin": margin,
                 }
             )

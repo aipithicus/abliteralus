@@ -424,9 +424,7 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
 
     artifact_raw = _require_mapping(raw.get("artifact", {}), "artifact")
     _reject_unknown(artifact_raw, _ALLOWED_ARTIFACT, "artifact")
-    artifact_mode = _require_text(
-        artifact_raw.get("mode", "full-checkpoint"), "artifact.mode"
-    )
+    artifact_mode = _require_text(artifact_raw.get("mode", "full-checkpoint"), "artifact.mode")
     if artifact_mode not in {"full-checkpoint", "capsule"}:
         raise BenchConfigError("artifact.mode must be full-checkpoint or capsule")
     artifact_fallback = _require_text(
@@ -438,8 +436,7 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
     if not isinstance(exports, list):
         raise BenchConfigError("artifact.exports must be a list")
     exports = [
-        _require_text(value, f"artifact.exports[{index}]")
-        for index, value in enumerate(exports)
+        _require_text(value, f"artifact.exports[{index}]") for index, value in enumerate(exports)
     ]
     if len(set(exports)) != len(exports):
         raise BenchConfigError("artifact.exports must not contain duplicates")
@@ -467,17 +464,11 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
 
     evaluation_raw = _require_mapping(raw.get("evaluation", {}), "evaluation")
     _reject_unknown(evaluation_raw, _ALLOWED_EVALUATION, "evaluation")
-    evaluation_enabled = _require_bool(
-        evaluation_raw.get("enabled", False), "evaluation.enabled"
-    )
-    evaluation_mode = _require_text(
-        evaluation_raw.get("mode", "safety-label"), "evaluation.mode"
-    )
+    evaluation_enabled = _require_bool(evaluation_raw.get("enabled", False), "evaluation.enabled")
+    evaluation_mode = _require_text(evaluation_raw.get("mode", "safety-label"), "evaluation.mode")
     if evaluation_mode != "safety-label":
         raise BenchConfigError("evaluation.mode must be safety-label")
-    safe_label = _require_text(
-        evaluation_raw.get("safe_label", "safe"), "evaluation.safe_label"
-    )
+    safe_label = _require_text(evaluation_raw.get("safe_label", "safe"), "evaluation.safe_label")
     unsafe_label = _require_text(
         evaluation_raw.get("unsafe_label", "unsafe"), "evaluation.unsafe_label"
     )
@@ -499,15 +490,11 @@ def load_experiment_spec(path: str | Path) -> SurgeryExperimentSpec:
             case.get("expected"), f"evaluation.cases[{index}].expected"
         ).casefold()
         if expected not in {"safe", "unsafe"}:
-            raise BenchConfigError(
-                f"evaluation.cases[{index}].expected must be safe or unsafe"
-            )
+            raise BenchConfigError(f"evaluation.cases[{index}].expected must be safe or unsafe")
         cases.append(
             {
                 "name": case_name,
-                "prompt": _require_text(
-                    case.get("prompt"), f"evaluation.cases[{index}].prompt"
-                ),
+                "prompt": _require_text(case.get("prompt"), f"evaluation.cases[{index}].prompt"),
                 "expected": expected,
             }
         )
@@ -998,8 +985,7 @@ def _gguf_evaluation_cases(spec: SurgeryExperimentSpec) -> list[dict[str, str | 
     if spec.evaluation_enabled:
         return [dict(case) for case in spec.evaluation["cases"]]
     return [
-        {"name": None, "prompt": prompt, "expected": None}
-        for prompt in spec.gguf["smoke_prompts"]
+        {"name": None, "prompt": prompt, "expected": None} for prompt in spec.gguf["smoke_prompts"]
     ]
 
 
@@ -1192,6 +1178,42 @@ def _release_accelerator_cache() -> None:
         pass
 
 
+def _evaluate_safety_checkpoints(
+    baseline_checkpoint: Path,
+    surgery_checkpoint: Path,
+    *,
+    spec: SurgeryExperimentSpec,
+    evaluation_runner: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if evaluation_runner is None:
+        from abliteralus.safety_evaluation import evaluate_safety_ab
+
+        evaluation_runner = evaluate_safety_ab
+    return dict(
+        evaluation_runner(
+            baseline_checkpoint,
+            surgery_checkpoint,
+            cases=spec.evaluation["cases"],
+            device=spec.model["device"],
+            dtype=spec.model["dtype"],
+            trust_remote_code=spec.model["trust_remote_code"],
+            max_new_tokens=spec.evaluation["max_new_tokens"],
+            safe_label=spec.evaluation["safe_label"],
+            unsafe_label=spec.evaluation["unsafe_label"],
+        )
+    )
+
+
+def _safety_evaluation_summaries(
+    evaluation_result: dict[str, Any],
+) -> dict[str, Any]:
+    model_results = _require_mapping(evaluation_result.get("models"), "evaluation result models")
+    return {
+        label: _require_mapping(result, f"evaluation result {label}").get("summary")
+        for label, result in model_results.items()
+    }
+
+
 def run_experiment(
     spec: SurgeryExperimentSpec,
     *,
@@ -1297,37 +1319,21 @@ def run_experiment(
                 "mode": spec.evaluation["mode"],
             }
             _write_json(manifest_path, manifest)
-            if evaluation_runner is None:
-                from abliteralus.safety_evaluation import evaluate_safety_ab
-
-                evaluation_runner = evaluate_safety_ab
-            evaluation_result = dict(
-                evaluation_runner(
-                    checkpoint,
-                    saved_checkpoint,
-                    cases=spec.evaluation["cases"],
-                    device=spec.model["device"],
-                    dtype=spec.model["dtype"],
-                    trust_remote_code=spec.model["trust_remote_code"],
-                    max_new_tokens=spec.evaluation["max_new_tokens"],
-                    safe_label=spec.evaluation["safe_label"],
-                    unsafe_label=spec.evaluation["unsafe_label"],
-                )
+            evaluation_result = _evaluate_safety_checkpoints(
+                checkpoint,
+                saved_checkpoint,
+                spec=spec,
+                evaluation_runner=evaluation_runner,
             )
             evaluation_path = run_dir / "evaluation" / "hf-results.json"
             _write_json(evaluation_path, evaluation_result)
-            model_results = _require_mapping(
-                evaluation_result.get("models"), "evaluation result models"
-            )
-            summaries = {
-                label: _require_mapping(result, f"evaluation result {label}").get("summary")
-                for label, result in model_results.items()
-            }
+            summaries = _safety_evaluation_summaries(evaluation_result)
             manifest["stages"]["evaluation"].update(
                 {
                     "status": "complete",
                     "ended_at": _utc_now(),
                     "results": str(evaluation_path),
+                    "results_sha256": _sha256(evaluation_path),
                     "summaries": summaries,
                 }
             )
@@ -1482,6 +1488,142 @@ def postprocess_experiment(
         raise
 
 
+def reevaluate_hf_experiment(
+    spec: SurgeryExperimentSpec,
+    *,
+    run_dir: str | Path,
+    surgery_checkpoint: str | Path,
+    evaluation_runner: Callable[..., dict[str, Any]] | None = None,
+) -> Path:
+    """Rerun HF safety A/B evaluation against a preserved surgery checkpoint."""
+    if not spec.evaluation_enabled:
+        raise BenchConfigError("the selected experiment does not enable HF evaluation")
+
+    run_dir = Path(run_dir).expanduser().resolve()
+    manifest_path = run_dir / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("experiment") != spec.name:
+        raise BenchConfigError("run manifest experiment does not match the selected config")
+    if manifest.get("spec_sha256") != _sha256(spec.source_path):
+        raise BenchConfigError("run manifest config hash does not match the selected config")
+
+    model = _require_mapping(manifest.get("model"), "run manifest model")
+    stages = _require_mapping(manifest.get("stages"), "run manifest stages")
+    evaluation_stage = _require_mapping(stages.get("evaluation"), "run manifest evaluation stage")
+    if evaluation_stage.get("status") != "complete":
+        raise BenchConfigError("the run does not have a complete HF evaluation stage")
+
+    baseline_checkpoint = Path(
+        _require_text(model.get("checkpoint"), "baseline checkpoint")
+    ).resolve()
+    surgery_checkpoint = Path(surgery_checkpoint).expanduser().resolve()
+    if not baseline_checkpoint.is_dir() or not surgery_checkpoint.is_dir():
+        raise FileNotFoundError("baseline or surgery checkpoint is no longer available")
+
+    artifact_stage = stages.get("artifact")
+    artifact_marker: dict[str, Any] | None = None
+    if isinstance(artifact_stage, dict) and artifact_stage.get("mode") == "capsule":
+        expected_surgery_id = _require_text(
+            artifact_stage.get("surgery_id"), "run manifest artifact surgery_id"
+        )
+        marker_path = surgery_checkpoint / "surgery-artifact.json"
+        if not marker_path.is_file():
+            raise BenchConfigError(
+                "capsule-backed HF reevaluation requires a rehydrated surgery checkpoint marker"
+            )
+        artifact_marker = _require_mapping(
+            json.loads(marker_path.read_text(encoding="utf-8")),
+            "rehydrated surgery checkpoint marker",
+        )
+        if artifact_marker.get("surgery_id") != expected_surgery_id:
+            raise BenchConfigError(
+                "rehydrated surgery checkpoint marker does not match the run artifact"
+            )
+
+    expected_hashes = spec.model.get("expected_sha256", {})
+    verified_files = _verify_checkpoint_files(baseline_checkpoint, expected_hashes)
+    report = preflight_experiment(spec, output_root=run_dir.parent, skip_gguf=True)
+    if not report["ready"]:
+        raise RuntimeError("preflight failed: " + "; ".join(report["failures"]))
+
+    evaluation_path = (run_dir / "evaluation" / "hf-results.json").resolve()
+    recorded_path = Path(
+        _require_text(evaluation_stage.get("results"), "HF evaluation results path")
+    ).resolve()
+    if recorded_path != evaluation_path or not evaluation_path.is_file():
+        raise BenchConfigError("recorded HF evaluation result is missing or outside the run")
+
+    started_at = _utc_now()
+    try:
+        evaluation_result = _evaluate_safety_checkpoints(
+            baseline_checkpoint,
+            surgery_checkpoint,
+            spec=spec,
+            evaluation_runner=evaluation_runner,
+        )
+        summaries = _safety_evaluation_summaries(evaluation_result)
+    except BaseException as error:
+        evaluation_stage.setdefault("reevaluation_failures", []).append(
+            {
+                "started_at": started_at,
+                "ended_at": _utc_now(),
+                "error": {"type": type(error).__name__, "message": str(error)},
+            }
+        )
+        manifest["stages"]["evaluation"] = evaluation_stage
+        _write_json(manifest_path, manifest)
+        raise
+
+    history_dir = evaluation_path.parent / "history"
+    history_name = datetime.now(timezone.utc).strftime("hf-results-%Y%m%dt%H%M%S%fz.json")
+    history_path = history_dir / history_name
+    history_dir.mkdir(parents=True, exist_ok=True)
+    if history_path.exists():
+        raise FileExistsError(f"HF evaluation history entry already exists: {history_path}")
+    previous_hash = _sha256(evaluation_path)
+    shutil.copy2(evaluation_path, history_path)
+    if _sha256(history_path) != previous_hash:
+        raise RuntimeError("archived HF evaluation result failed hash verification")
+
+    ended_at = _utc_now()
+    evaluation_stage.setdefault("history", []).append(
+        {
+            "evaluated_at": evaluation_stage.get(
+                "reevaluated_at", evaluation_stage.get("ended_at")
+            ),
+            "results": str(history_path),
+            "results_sha256": previous_hash,
+            "summaries": evaluation_stage.get("summaries"),
+        }
+    )
+    _write_json(evaluation_path, evaluation_result)
+    evaluation_stage.update(
+        {
+            "results": str(evaluation_path),
+            "results_sha256": _sha256(evaluation_path),
+            "summaries": summaries,
+            "reevaluated_at": ended_at,
+            "reevaluation_runtime": {
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "baseline_checkpoint": str(baseline_checkpoint),
+                "baseline_verified_files": verified_files,
+                "surgery_checkpoint": str(surgery_checkpoint),
+                "surgery_artifact": artifact_marker,
+                "git": {
+                    "commit": _git_value(["rev-parse", "HEAD"]),
+                    "status": _git_value(["status", "--short"]),
+                },
+                "python": sys.version,
+                "platform": platform.platform(),
+            },
+        }
+    )
+    manifest["stages"]["evaluation"] = evaluation_stage
+    _write_json(manifest_path, manifest)
+    return run_dir
+
+
 def reevaluate_gguf_experiment(
     spec: SurgeryExperimentSpec,
     *,
@@ -1600,7 +1742,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Run a reproducible HF surgery and optional GGUF A/B experiment.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for name in ("preflight", "run", "postprocess", "smoke"):
+    for name in ("preflight", "run", "postprocess", "reevaluate-hf", "smoke"):
         command = subparsers.add_parser(name)
         command.add_argument("--config", required=True, type=Path)
         if name in {"preflight", "run"}:
@@ -1609,8 +1751,10 @@ def _parser() -> argparse.ArgumentParser:
         if name == "run":
             command.add_argument("--run-id")
             command.add_argument("--offline", action="store_true")
-        elif name in {"postprocess", "smoke"}:
+        elif name in {"postprocess", "reevaluate-hf", "smoke"}:
             command.add_argument("--run-dir", required=True, type=Path)
+            if name == "reevaluate-hf":
+                command.add_argument("--surgery-checkpoint", required=True, type=Path)
     return parser
 
 
@@ -1623,6 +1767,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["ready"] else 2
     if args.command == "postprocess":
         print(postprocess_experiment(spec, run_dir=args.run_dir))
+        return 0
+    if args.command == "reevaluate-hf":
+        print(
+            reevaluate_hf_experiment(
+                spec,
+                run_dir=args.run_dir,
+                surgery_checkpoint=args.surgery_checkpoint,
+            )
+        )
         return 0
     if args.command == "smoke":
         print(reevaluate_gguf_experiment(spec, run_dir=args.run_dir))

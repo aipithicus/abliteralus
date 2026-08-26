@@ -327,6 +327,119 @@ def test_run_records_external_safety_evaluation_before_artifact_stage(tmp_path):
     assert captured["evaluation"]["surgery"] == run_dir / "hf"
 
 
+def test_hf_reevaluation_archives_prior_result_and_validates_capsule_marker(tmp_path, monkeypatch):
+    spec = load_experiment_spec(
+        _write_config(
+            tmp_path,
+            artifact={
+                "mode": "capsule",
+                "require_exact": True,
+                "fallback": "error",
+                "exports": [],
+            },
+            evaluation={
+                "enabled": True,
+                "mode": "safety-label",
+                "cases": [{"name": "unsafe-one", "prompt": "unsafe prompt", "expected": "unsafe"}],
+            },
+        )
+    )
+    surgery_id = "a" * 64
+    surgery_checkpoint = (tmp_path / "rehydrated").resolve()
+    surgery_checkpoint.mkdir()
+    (surgery_checkpoint / "surgery-artifact.json").write_text(
+        json.dumps({"schema_version": 1, "surgery_id": surgery_id, "capsule": "fixture"}),
+        encoding="utf-8",
+    )
+
+    run_dir = (tmp_path / "outputs/unit-mini/reevaluate-hf").resolve()
+    evaluation_path = run_dir / "evaluation/hf-results.json"
+    old_result = {
+        "mode": "safety-label",
+        "models": {
+            "baseline": {"summary": {"accuracy": 0.25}},
+            "surgery": {"summary": {"accuracy": 0.25}},
+        },
+    }
+    bench._write_json(evaluation_path, old_result)
+    manifest_path = run_dir / "run-manifest.json"
+    bench._write_json(
+        manifest_path,
+        {
+            "experiment": spec.name,
+            "spec_sha256": bench._sha256(spec.source_path),
+            "model": {"checkpoint": str((tmp_path / "checkpoint").resolve())},
+            "stages": {
+                "evaluation": {
+                    "status": "complete",
+                    "ended_at": "earlier",
+                    "results": str(evaluation_path),
+                    "summaries": {
+                        "baseline": {"accuracy": 0.25},
+                        "surgery": {"accuracy": 0.25},
+                    },
+                },
+                "artifact": {
+                    "status": "complete",
+                    "mode": "capsule",
+                    "surgery_id": surgery_id,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        bench,
+        "preflight_experiment",
+        lambda *_args, **_kwargs: {"ready": True, "failures": []},
+    )
+    monkeypatch.setattr(
+        bench,
+        "_git_value",
+        lambda arguments: "fixture-commit" if arguments == ["rev-parse", "HEAD"] else "",
+    )
+    captured = {}
+
+    def evaluate(baseline, surgery, **kwargs):
+        captured.update({"baseline": baseline, "surgery": surgery, **kwargs})
+        return {
+            "mode": "safety-label",
+            "models": {
+                "baseline": {"summary": {"accuracy": 1.0}},
+                "surgery": {"summary": {"accuracy": 0.75}},
+            },
+        }
+
+    assert (
+        bench.reevaluate_hf_experiment(
+            spec,
+            run_dir=run_dir,
+            surgery_checkpoint=surgery_checkpoint,
+            evaluation_runner=evaluate,
+        )
+        == run_dir
+    )
+
+    updated = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stage = updated["stages"]["evaluation"]
+    history_path = Path(stage["history"][0]["results"])
+    assert json.loads(history_path.read_text(encoding="utf-8")) == old_result
+    assert stage["history"][0]["results_sha256"] == bench._sha256(history_path)
+    assert stage["summaries"]["surgery"]["accuracy"] == 0.75
+    assert stage["reevaluation_runtime"]["git"] == {
+        "commit": "fixture-commit",
+        "status": "",
+    }
+    assert stage["reevaluation_runtime"]["surgery_artifact"]["surgery_id"] == surgery_id
+    assert captured["baseline"] == (tmp_path / "checkpoint").resolve()
+    assert captured["surgery"] == surgery_checkpoint
+    assert (
+        json.loads(evaluation_path.read_text(encoding="utf-8"))["models"]["baseline"]["summary"][
+            "accuracy"
+        ]
+        == 1.0
+    )
+
+
 def test_capsule_stage_receives_mutation_hints_before_run_is_finalized(tmp_path):
     spec = load_experiment_spec(
         _write_config(

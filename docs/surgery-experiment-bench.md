@@ -55,7 +55,7 @@ renderer validates that the rendered conversation still contains the source
 prompt and falls back between plain and typed content representations. The
 profile skips the ordinary assistant-coherence/refusal verifier and instead
 loads the untouched and operated checkpoints sequentially, recording generated
-verdicts and the first-token `unsafe - safe` logit margin in
+verdicts and the emitted-label-step `unsafe - safe` logit margin in
 `evaluation/hf-results.json`. This keeps peak VRAM bounded to one evaluated model.
 Both profiles preserve the source checkpoint's BF16 tensor contract so an exact
 capsule does not degenerate into a full-checkpoint FP16 conversion. CUDA preflight
@@ -81,6 +81,31 @@ delivery for that child process:
     --config experiments/surgery/local-llama-guard-3-1b-mirror.yaml
 )
 ```
+
+If evaluator code changes after a capsule-backed run, rehydrate the exact surgery
+checkpoint and rerun only the Transformers A/B evaluation:
+
+```nu
+(
+  lab-bench --config private/lab_bench/lab.local.toml artifact rehydrate
+    outputs/surgery/<experiment>/<run-id>/artifact
+    --base <resolved-baseline-checkpoint>
+    --output .scratch/verification/<surgery-id>
+)
+
+(
+  lab-bench --config private/lab_bench/lab.local.toml
+    local-surgery --anonymous-hub reevaluate-hf
+    --config experiments/surgery/local-llama-guard-3-1b-mirror.yaml
+    --run-dir outputs/surgery/<experiment>/<run-id>
+    --surgery-checkpoint .scratch/verification/<surgery-id>
+)
+```
+
+`reevaluate-hf` verifies the pinned baseline hashes and the rehydrated capsule's
+surgery marker before loading either model. It preserves the prior result under
+`evaluation/history/`, writes the replacement atomically, and records the new
+runtime, Git state, hashes, and summaries in `run-manifest.json`.
 
 Run the HF surgery/evaluation/capsule lane without waiting for llama.cpp tooling:
 
@@ -119,6 +144,8 @@ outputs/surgery/<experiment>/<run-id>/
   surgery.log
   evaluation/
     hf-results.json
+    history/
+      hf-results-<timestamp>.json
   artifact/
     manifest.json
     tensor-manifest.json

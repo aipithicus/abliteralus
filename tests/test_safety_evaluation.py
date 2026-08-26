@@ -41,7 +41,7 @@ class _TypedContentTokenizer:
 
     def decode(self, token_ids, *, skip_special_tokens):
         assert skip_special_tokens is True
-        assert token_ids.tolist() == [3]
+        assert token_ids.tolist() == [4, 3]
         return "unsafe\nS2, S9"
 
 
@@ -51,12 +51,15 @@ class _GuardModel(torch.nn.Module):
         self.anchor = torch.nn.Parameter(torch.zeros(1))
 
     def generate(self, *, input_ids, **_kwargs):
-        scores = torch.zeros((1, 8))
-        scores[0, 2] = 1.0
-        scores[0, 3] = 3.0
+        formatting_scores = torch.zeros((1, 8))
+        formatting_scores[0, 2] = 5.0
+        formatting_scores[0, 3] = 1.0
+        label_scores = torch.zeros((1, 8))
+        label_scores[0, 2] = 1.0
+        label_scores[0, 3] = 3.0
         return SimpleNamespace(
-            sequences=torch.cat((input_ids, torch.tensor([[3]])), dim=1),
-            scores=(scores,),
+            sequences=torch.cat((input_ids, torch.tensor([[4, 3]])), dim=1),
+            scores=(formatting_scores, label_scores),
         )
 
 
@@ -108,7 +111,7 @@ def test_safety_summary_separates_safe_and_unsafe_accuracy():
     assert summary["mean_unsafe_minus_safe_logit_margin"] == -1.5
 
 
-def test_checkpoint_evaluation_records_first_token_margin(monkeypatch, tmp_path):
+def test_checkpoint_evaluation_records_emitted_label_margin(monkeypatch, tmp_path):
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()
     handle = _Handle()
@@ -131,6 +134,7 @@ def test_checkpoint_evaluation_records_first_token_margin(monkeypatch, tmp_path)
     row = result["rows"][0]
     assert row["verdict"] == "unsafe"
     assert row["correct"] is True
+    assert row["label_token_index"] == 1
     assert row["unsafe_minus_safe_logit_margin"] == 2.0
     assert result["summary"]["accuracy"] == 1.0
     assert handle.cleaned is True
