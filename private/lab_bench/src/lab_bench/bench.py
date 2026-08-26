@@ -462,6 +462,9 @@ class LabBench:
 
     def _repository_environment(self) -> dict[str, str]:
         environment = dict(os.environ)
+        environment.setdefault(
+            "HF_HOME", str(self.config.repository / ".scratch" / "cache" / "huggingface")
+        )
         source = self.config.repository / "private" / "surgery_artifacts" / "src"
         existing = environment.get("PYTHONPATH", "")
         environment["PYTHONPATH"] = (

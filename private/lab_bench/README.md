@@ -45,7 +45,8 @@ Only an online local `run` receives the `local-surgery` Hub profile. Offline run
 preflight, postprocessing, and smoke tests run without a credential environment.
 Use `--anonymous-hub` only for public sources: it bypasses Proton Pass, removes
 inherited Hugging Face token variables, and disables implicit cached credentials
-for the child process.
+for the child process. Unless `HF_HOME` is explicitly set, local surgery caches
+Hub files beneath the ignored workspace-local `.scratch/cache/huggingface` tree.
 
 ## Lightning surgery
 

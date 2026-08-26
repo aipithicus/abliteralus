@@ -99,6 +99,7 @@ def test_anonymous_local_surgery_strips_hub_credentials(
 ) -> None:
     bench, manager = configured_bench
     observed: dict = {}
+    monkeypatch.delenv("HF_HOME", raising=False)
     monkeypatch.setenv("HF_TOKEN", "must-not-reach-child")
     monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "must-not-reach-child")
 
@@ -114,6 +115,9 @@ def test_anonymous_local_surgery_strips_hub_credentials(
     assert "HF_TOKEN" not in observed["environ"]
     assert "HUGGING_FACE_HUB_TOKEN" not in observed["environ"]
     assert observed["environ"]["HF_HUB_DISABLE_IMPLICIT_TOKEN"] == "1"
+    assert observed["environ"]["HF_HOME"] == str(
+        Path.cwd() / ".scratch" / "cache" / "huggingface"
+    )
     assert observed["command"][-3:] == ["run", "--config", "experiment.yaml"]
 
 

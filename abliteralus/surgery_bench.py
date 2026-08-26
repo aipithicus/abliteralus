@@ -1195,7 +1195,7 @@ def run_experiment(
     evaluation_runner: Callable[..., dict[str, Any]] | None = None,
 ) -> Path:
     """Execute the full experiment and return its immutable run directory."""
-    run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dt%H%M%Sz")
     if _NAME.fullmatch(run_id) is None:
         raise BenchConfigError("run_id contains unsupported characters")
     root = Path(output_root or spec.output_root).expanduser().resolve()

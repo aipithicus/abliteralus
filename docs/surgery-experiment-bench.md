@@ -23,8 +23,6 @@ quantizer differences.
 From Nushell:
 
 ```nu
-$env.HF_HOME = ((pwd) | path join .scratch cache huggingface)
-
 (
   uv run --frozen --extra gguf abliteralus-surgery preflight
     --config experiments/surgery/local-qwen25-0.5b.yaml
@@ -35,6 +33,9 @@ $env.HF_HOME = ((pwd) | path join .scratch cache huggingface)
     --config experiments/surgery/local-qwen25-0.5b.yaml
 )
 ```
+
+`lab-bench` defaults `HF_HOME` to the ignored workspace-local
+`.scratch/cache/huggingface` tree when the caller has not selected another cache.
 
 The workspace-local `.scratch` tree is ignored by Git. Allow roughly 8 GB of free
 disk for the source snapshot, operated checkpoint, temporary float GGUFs, and

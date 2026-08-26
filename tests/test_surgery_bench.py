@@ -251,6 +251,22 @@ def test_run_records_manifest_and_enforces_prompt_limits(tmp_path):
     assert captured["model_name"] == str((tmp_path / "checkpoint").resolve())
 
 
+def test_generated_run_id_satisfies_the_path_contract(tmp_path):
+    spec = load_experiment_spec(_write_config(tmp_path))
+
+    class FakePipeline:
+        def __init__(self, **kwargs):
+            self.output_dir = Path(kwargs["output_dir"])
+
+        def run(self):
+            self.output_dir.mkdir(parents=True)
+            return self.output_dir
+
+    run_dir = run_experiment(spec, pipeline_factory=FakePipeline)
+
+    assert bench._NAME.fullmatch(run_dir.name)
+
+
 def test_run_records_external_safety_evaluation_before_artifact_stage(tmp_path):
     spec = load_experiment_spec(
         _write_config(
