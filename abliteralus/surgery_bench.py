@@ -1236,9 +1236,13 @@ def run_experiment(
         raise RuntimeError("preflight failed: " + "; ".join(report["failures"]))
 
     run_dir = root / spec.name / run_id
-    if run_dir.exists():
-        raise FileExistsError(f"run directory already exists: {run_dir}")
-    run_dir.mkdir(parents=True)
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Reserve the immutable leaf atomically; a check followed by mkdir can
+        # race another controller using the same explicit or second-resolution ID.
+        run_dir.mkdir()
+    except FileExistsError as error:
+        raise FileExistsError(f"run directory already exists: {run_dir}") from error
 
     manifest_path = run_dir / "run-manifest.json"
     manifest: dict[str, Any] = {

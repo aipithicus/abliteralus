@@ -269,6 +269,15 @@ def test_generated_run_id_satisfies_the_path_contract(tmp_path):
     assert bench._NAME.fullmatch(run_dir.name)
 
 
+def test_existing_run_directory_is_never_reused(tmp_path):
+    spec = load_experiment_spec(_write_config(tmp_path))
+    existing = Path(spec.output_root) / spec.name / "collision"
+    existing.mkdir(parents=True)
+
+    with pytest.raises(FileExistsError, match="run directory already exists"):
+        run_experiment(spec, run_id="collision")
+
+
 def test_run_records_external_safety_evaluation_before_artifact_stage(tmp_path):
     spec = load_experiment_spec(
         _write_config(
