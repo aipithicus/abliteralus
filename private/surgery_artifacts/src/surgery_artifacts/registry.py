@@ -6,11 +6,11 @@ import json
 import os
 import re
 import shutil
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ._staging import create_staging_directory, write_staging_text
 from .canonical_json import pretty_text
 from .errors import CapsuleFormatError
 from .validation import validate_capsule
@@ -46,10 +46,9 @@ class ArtifactRegistry:
             if existing.surgery_id != validation.surgery_id:
                 raise CapsuleFormatError("registry object identity collision")
         else:
-            staging = Path(tempfile.mkdtemp(prefix=".incoming-", dir=objects))
-            shutil.rmtree(staging)
+            staging = create_staging_directory(objects, prefix=".incoming-")
             try:
-                shutil.copytree(validation.path, staging)
+                shutil.copytree(validation.path, staging, dirs_exist_ok=True)
                 copied = validate_capsule(staging)
                 if copied.surgery_id != validation.surgery_id:
                     raise CapsuleFormatError("registry copy changed capsule identity")
@@ -83,13 +82,13 @@ class ArtifactRegistry:
             "surgery_id": surgery_id,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        handle, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+        temporary = write_staging_text(
+            destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            text=pretty_text(payload),
         )
-        os.close(handle)
-        temporary = Path(temporary_name)
         try:
-            temporary.write_text(pretty_text(payload), encoding="utf-8")
             os.replace(temporary, destination)
         finally:
             if temporary.exists():

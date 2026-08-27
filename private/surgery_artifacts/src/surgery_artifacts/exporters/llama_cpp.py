@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
+from .._staging import staging_directory
 from ..canonical_json import pretty_text
 from ..errors import UnsupportedExportError
 from ..hashing import sha256_file
@@ -39,10 +39,10 @@ def export_llama_cpp(
         raise FileExistsError(f"llama.cpp export destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(
-        prefix=f".{destination.name}.llama-", dir=destination.parent
-    ) as temporary_name:
-        temporary = Path(temporary_name)
+    with staging_directory(
+        destination.parent,
+        prefix=f".{destination.name}.llama-",
+    ) as temporary:
         peft = export_peft(validation.path, temporary / "peft")
         candidate = temporary / "adapter.gguf"
         command = [

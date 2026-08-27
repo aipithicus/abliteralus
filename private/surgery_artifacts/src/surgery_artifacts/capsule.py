@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +13,7 @@ from typing import Any, Sequence
 import torch
 from safetensors.torch import save_file
 
+from ._staging import create_staging_directory
 from .canonical_json import canonical_bytes, normalize, pretty_text
 from .checkpoint import SafeTensorCheckpoint
 from .codecs import (
@@ -138,8 +138,9 @@ def create_capsule(
         )
     )
 
-    temporary = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}.tmp-", dir=destination.parent)
+    temporary = create_staging_directory(
+        destination.parent,
+        prefix=f".{destination.name}.tmp-",
     )
     try:
         payload: dict[str, torch.Tensor] = {}

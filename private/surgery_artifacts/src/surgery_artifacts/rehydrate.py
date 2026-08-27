@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from safetensors import safe_open
 from safetensors.torch import save_file
 
+from ._staging import create_staging_directory
 from .canonical_json import pretty_text
 from .checkpoint import SafeTensorCheckpoint
 from .codecs import apply_operation
@@ -50,8 +50,9 @@ def rehydrate_capsule(
     if set(operations) != set(changed_records):
         raise CapsuleFormatError("changed tensor records do not match capsule operations")
 
-    temporary = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}.tmp-", dir=destination.parent)
+    temporary = create_staging_directory(
+        destination.parent,
+        prefix=f".{destination.name}.tmp-",
     )
     try:
         _copy_base_files(base.root, temporary, excluded=set(base.weight_files))

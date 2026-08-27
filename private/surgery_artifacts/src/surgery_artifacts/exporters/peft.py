@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +12,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
+from .._staging import create_staging_directory
 from ..canonical_json import pretty_text
 from ..errors import CapsuleFormatError, UnsupportedExportError
 from ..hashing import sha256_file, tensor_sha256
@@ -107,8 +107,9 @@ def export_peft(capsule: str | Path, output: str | Path) -> Path:
         "use_rslora": False,
     }
 
-    temporary = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}.tmp-", dir=destination.parent)
+    temporary = create_staging_directory(
+        destination.parent,
+        prefix=f".{destination.name}.tmp-",
     )
     try:
         save_file(
