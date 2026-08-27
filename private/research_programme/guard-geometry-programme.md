@@ -309,6 +309,37 @@ form `SiLU(w_g·x)·(w_u·x)` makes the kernel a bivariate Gaussian integral —
 tractable numerically, not erfc-closed-form) and the calibration-pass
 surrogate. Real lift; scoped out of the near term.
 
+### 4.11 Embedding condensation as the mechanistic backdrop (arXiv:2602.00217)
+
+Source: `codex-scientiae/ingestion/inventory/2602.00217v3/` (PDF; Liu et al.,
+ICML 2026). **Embedding condensation**: with depth, pairwise cosine
+similarities of a transformer's token embeddings drift toward 1 — the
+representation collapses into a narrow cone. Severity is strongly
+size-dependent (severe at ≤1B, resisted at 32B; confirmed in a
+confounder-controlled family varying only MLP width), present at
+*initialization* (matching the Geshkovski et al. infinite-depth clustering
+theory for random QKV), counteracted but not eliminated by pre-training, and
+**not transferred by knowledge distillation** — behavioral matching does not
+transfer geometry. Their training-side fix (a log-sum-exp dispersion loss
+over pairwise angles) is out of scope here (we do not train the guard), but
+their *diagnostic* imports directly: layer-wise pairwise-cosine distributions
+stacked into a depth heatmap, summarized by the Spearman/Kendall rank
+correlation between mean cosine and layer index.
+
+**Roles**: (a) mechanism for H3 — Llama Guard 3 1B sits squarely in the
+severe-condensation size class, so the raw metric fights *two* stacked
+nuisances: the task-independent condensation cone and the template
+covariance; whitening is the measurement-time counterpart of their
+training-time dispersion loss. The cone axis is also essentially the mean
+direction that uncentered SVD's top singular vector absorbs (§4.2) — the
+estimator taxonomy, the condensation phenomenon, and the centering theory are
+one story. (b) A cheap P2 companion diagnostic: the guard's condensation
+profile from the existing observation hooks, cross-referenced against the
+evidence heatmap and the `WhitenedSVDExtractor` condition-number/effective-
+rank reports. (c) Communicable framing support: distillation transferring
+behavior but not geometry is independent evidence that geometry must be
+interrogated directly — the programme's premise.
+
 ## 5. Hypotheses
 
 Each hypothesis states its measurand, prediction, and falsifier. Both outcomes
@@ -334,13 +365,19 @@ reversal (the "default-on safe prior" picture is wrong).
 *Note*: partially answerable from already-collected pilot tables before any
 new code.
 
-**H3 — Whitening potency.** Template covariance dominates the raw metric, so
-the whitened estimator finds a more causally aligned axis:
+**H3 — Whitening potency.** Two stacked nuisances dominate the raw metric at
+this scale — the size-dependent condensation cone (§4.11) and the template
+covariance — so the whitened estimator finds a more causally aligned axis:
 ED50(whitened) < ED50(raw mean-diff), sham-normalized, both signs.
-*Measurand*: ED50 ratio with bootstrap CI.
+*Measurand*: ED50 ratio with bootstrap CI; condensation profile (§4.11)
+reported alongside as the mechanistic covariate.
 *Falsifier*: ratio ≈ 1 — within-class covariance is effectively isotropic
 inside the verdict-relevant subspace, itself a publishable observation about
-classifier fine-tuning.
+classifier fine-tuning (and, given the measured condensation profile, a
+surprising one).
+*Cross-scale corollary (not near-term)*: since condensation attenuates with
+model size, whitening's advantage should shrink on larger guard variants — a
+directional prediction recorded now for any future multi-scale run.
 
 **H4 — Computation upstream of transcription.** There exist layers where
 causal patching moves the verdict but readout-axis alignment is low.
@@ -432,9 +469,11 @@ into estimator #0.
 
 **P2 — Evidence gates.** Implement mxPBF (α set per the consistency bound;
 report sensitivity in {α, 2α}); run per layer and per S-code, in neuron and
-whitened bases.
-*Exit gate*: layer × category evidence heatmap; layer set for P3 chosen from
-it (with the causal map), not by convention.
+whitened bases. Alongside, the condensation profile (§4.11): layer-wise
+pairwise-cosine distributions with the Spearman-ρ depth summary — near-free
+from the same activation captures.
+*Exit gate*: layer × category evidence heatmap + condensation profile; layer
+set for P3 chosen from them (with the causal map), not by convention.
 
 **P3 — Estimator arms.** Centering variants (4.2 taxonomy), whitened-SVD
 (existing extractor behind the protocol), MoM-robust (block medians over
@@ -511,7 +550,11 @@ without fooling itself.*
 - **Single model, single template**: conclusions are about this prep.
   Replication path: the mirror surgery config
   (`experiments/surgery/local-llama-guard-3-1b-mirror.yaml` lineage) and,
-  later, Guard variants at other scales.
+  later, Guard variants at other scales. The scale caveat now has a mechanism
+  and a direction: condensation severity falls with model size (§4.11), so
+  estimator rankings measured at 1B — especially whitening's margin over raw
+  mean-diff — may legitimately reorder at larger scale, and H3's cross-scale
+  corollary predicts *which way*.
 - **Axis ambiguity**: antipodal direction pairs must be canonicalized before
   any spherical statistics; the policy (sign of margin effect) is part of the
   spec, not a per-analysis choice.
@@ -554,6 +597,8 @@ Corpus papers on the critical path: 2112.02580 (mxPBF), 2307.15213
 2106.06375 (SN mixtures), 2208.12435 (landscapes + energy tests), 2504.16318
 (cosine hygiene). Conditional path (H7/P8): 2604.24895 (hyperbolic Riemannian
 Gaussian mixtures), 2605.00363 (anisotropic HWN inference). Conditional path
-(H8/P9): 2607.21366 (HOPE; `bibliotecha_archive/md-shelf/`). Reserve:
+(H8/P9): 2607.21366 (HOPE; `bibliotecha_archive/md-shelf/`). Mechanistic
+backdrop (H3/P2): 2602.00217 (embedding condensation;
+`codex-scientiae/ingestion/inventory/`, PDF). Reserve:
 2209.03318 / 2603.14815 / 2509.11435 (Wasserstein family), 2601.10992 (metric
 scaling), 2605.08001 (median scale selection).
