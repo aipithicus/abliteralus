@@ -19,8 +19,8 @@ Pipeline (see manifest.toml):
 
 Branches: ``shadow`` (machine-written) -> ``fixes`` (one commit per pending upstream fix) -> ``main``
 (research + lab-only adaptations). Default is report-only. ``--merge`` merges shadow into fixes in
-a temporary worktree (conflicts stop with the worktree kept), reports fixes absorbed upstream, then
-merges fixes (or shadow, if there is no fixes branch) into the checked-out ``main``.
+a project-local isolated worktree (conflicts stop with the worktree kept), reports fixes absorbed
+upstream, then merges fixes (or shadow, if there is no fixes branch) into the checked-out ``main``.
 ``--self-test`` proves the rename is an involution on the selected set and that the seams
 leave no forbidden import behind, without writing anything.
 
@@ -33,13 +33,18 @@ import argparse
 import datetime as _dt
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 from typing import NoReturn
+
+from abliteralus.run_paths import allocate_run_workspace
+from abliteralus.toolchain import (
+    UvToolchainError,
+    repository_tool_environment,
+    resolve_uv,
+)
 
 HERE = Path(__file__).resolve().parent
 LAB_ROOT = HERE.parent.parent  # private/sync -> private -> lab root
@@ -339,12 +344,28 @@ def transform_pyproject(text: str, cfg: dict, torch_cfg: dict, constraints: list
     return re.sub(r"\n{3,}", "\n\n", text)
 
 
-def constraints_from_fork(fork: Path, project_name: str, torch_version_out: list[str]) -> list[str]:
-    if shutil.which("uv") is None:
-        print("shadow_sync: warning: uv not found; constraint-dependencies will be left as in the fork")
-        return []
-    proc = subprocess.run(["uv", "export", "--frozen", "--no-hashes", "--no-emit-project",
-                           "--format", "requirements-txt"], cwd=str(fork), capture_output=True, text=True)
+def constraints_from_fork(
+    fork: Path,
+    project_name: str,
+    torch_version_out: list[str],
+    uv_executable: Path,
+) -> list[str]:
+    proc = subprocess.run(
+        [
+            str(uv_executable),
+            "export",
+            "--frozen",
+            "--no-hashes",
+            "--no-emit-project",
+            "--format",
+            "requirements-txt",
+        ],
+        cwd=str(fork),
+        env=repository_tool_environment(LAB_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
     if proc.returncode != 0:
         die(f"uv export failed in fork:\n{proc.stderr}")
     pins: list[str] = []
@@ -404,7 +425,15 @@ def select_files(fork: Path, ref: str, manifest: dict) -> tuple[list[str], list[
     return included, excluded, unmapped
 
 
-def build_tree(fork: Path, ref: str, manifest: dict, out: Path, *, stage_a_only: bool = False) -> dict:
+def build_tree(
+    fork: Path,
+    ref: str,
+    manifest: dict,
+    out: Path,
+    *,
+    stage_a_only: bool = False,
+    uv_executable: Path | None = None,
+) -> dict:
     """Write the transformed tree to ``out``. Returns a report dict."""
     ren = Renamer(manifest["rename"]["from"], manifest["rename"]["to"])
     pkg_old, pkg_new = manifest["rename"]["from"], manifest["rename"]["to"]
@@ -416,7 +445,17 @@ def build_tree(fork: Path, ref: str, manifest: dict, out: Path, *, stage_a_only:
               "seams": {}, "replaced": [], "injected": [], "binary": [],
               "dropped_exports": [], "pruned_tests": []}
     torch_version: list[str] = []
-    constraints = [] if stage_a_only else constraints_from_fork(fork, pkg_old, torch_version)
+    if stage_a_only:
+        constraints = []
+    else:
+        if uv_executable is None:
+            raise ValueError("uv_executable is required for the full shadow transform")
+        constraints = constraints_from_fork(
+            fork,
+            pkg_old,
+            torch_version,
+            uv_executable,
+        )
 
     def _module_name(rel: str) -> str | None:
         if not (rel.startswith(pkg_old + "/") and rel.endswith(".py")):
@@ -503,13 +542,16 @@ def commit_tree_to_shadow(lab: Path, tree_dir: Path, message: str) -> tuple[str 
     Returns (new_commit, previous_commit); new_commit is None when the tree is unchanged.
     """
     git_dir = lab / ".git"
-    with tempfile.TemporaryDirectory() as td:
-        index = Path(td) / "index"
+    workspace = allocate_run_workspace(lab, "sync-index")
+    try:
+        index = workspace.temp_dir / "index"
         env = {"GIT_INDEX_FILE": str(index)}
         # --force: the shadow tree is exactly the manifest selection. A vendored .gitignore must
         # not drop files that upstream tracks despite its own ignore rules.
         git(["--git-dir", str(git_dir), "--work-tree", str(tree_dir), "add", "-A", "--force", "--", "."], tree_dir, env=env)
         tree = git(["--git-dir", str(git_dir), "write-tree"], lab, env=env)
+    finally:
+        workspace.cleanup()
     prev = git(["rev-parse", "-q", "--verify", "refs/heads/shadow"], lab, check=False) or None
     if prev:
         prev_tree = git(["rev-parse", f"{prev}^{{tree}}"], lab)
@@ -552,16 +594,28 @@ def diff_names(lab: Path, a: str, b: str) -> set[str]:
 def merge_via_worktree(lab: Path, target: str, source: str) -> tuple[bool, Path | None]:
     """Merge ``source`` into branch ``target`` without disturbing the checked-out tree.
 
-    Uses a temporary worktree. On a clean merge the worktree is removed and (True, None) is
-    returned; on conflicts the worktree is kept for manual resolution and (False, path) is
-    returned.
+    Uses an isolated worktree under ``.scratch/runs``. On a clean merge the worktree is removed
+    and (True, None) is returned; on conflicts the worktree is kept for manual resolution and
+    (False, path) is returned.
     """
-    path = Path(tempfile.mkdtemp(prefix="shadow_sync-")) / f"{target}-wt"
-    git(["worktree", "add", "-q", str(path), target], lab)
+    workspace = allocate_run_workspace(lab, "sync-worktree")
+    path = workspace.path / "checkout"
+    try:
+        git(["worktree", "add", "-q", str(path), target], lab)
+    except BaseException:
+        git(["worktree", "remove", "--force", str(path)], lab, check=False)
+        try:
+            workspace.cleanup()
+        except OSError:
+            pass
+        raise
     proc = subprocess.run(["git", "merge", "--no-edit", source], cwd=str(path), capture_output=True)
     if proc.returncode != 0:
+        workspace.record_result(proc.returncode)
         return False, path
     git(["worktree", "remove", "--force", str(path)], lab, check=False)
+    workspace.record_result(0)
+    workspace.cleanup()
     return True, None
 
 
@@ -609,10 +663,18 @@ def sync_fork(fork: Path, remote: str, branch: str) -> None:
 # ───────────────────────────── commands ─────────────────────────────
 
 
-def cmd_self_test(fork: Path, ref: str, manifest: dict) -> int:
+def _repository_uv() -> Path:
+    try:
+        return resolve_uv(LAB_ROOT)
+    except UvToolchainError as error:
+        die(str(error))
+
+
+def cmd_self_test(fork: Path, ref: str, manifest: dict, lab: Path = LAB_ROOT) -> int:
     ren = Renamer(manifest["rename"]["from"], manifest["rename"]["to"])
-    with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "tree"
+    workspace = allocate_run_workspace(lab, "sync-self-test")
+    try:
+        out = workspace.temp_dir / "tree"
         rep = build_tree(fork, ref, manifest, out, stage_a_only=True)
         mismatches = []
         for rel in rep["included"]:
@@ -632,8 +694,14 @@ def cmd_self_test(fork: Path, ref: str, manifest: dict) -> int:
         print(f"self-test stage A (select+rename): {len(rep['included'])} files, {len(mismatches)} mismatches")
         for m in mismatches[:20]:
             print("  ", m)
-        out_b = Path(td) / "tree_b"
-        rep_b = build_tree(fork, ref, manifest, out_b)
+        out_b = workspace.temp_dir / "tree_b"
+        rep_b = build_tree(
+            fork,
+            ref,
+            manifest,
+            out_b,
+            uv_executable=_repository_uv(),
+        )
         print(f"self-test stage B (seams+pyproject): {sum(rep_b['seams'].values())} import rewrites in {len(rep_b['seams'])} files; "
               f"replaced={rep_b['replaced']} injected={rep_b['injected']}; forbidden-import scan: clean")
         # compile every .py in the package to catch syntax damage from the rewrite
@@ -657,6 +725,8 @@ def cmd_self_test(fork: Path, ref: str, manifest: dict) -> int:
             for u in rep["unmapped"]:
                 print("  ", u)
         return 1 if (mismatches or bad) else 0
+    finally:
+        workspace.cleanup()
 
 
 def print_report(rep: dict, ref_sha: str, ref_date: str, commit: str | None, prev: str | None,
@@ -729,11 +799,19 @@ def main(argv: list[str] | None = None) -> int:
     ref_date = git(["log", "-1", "--format=%cI", ref_sha], fork)
 
     if args.self_test:
-        return cmd_self_test(fork, ref_sha, manifest)
+        return cmd_self_test(fork, ref_sha, manifest, lab)
 
-    with tempfile.TemporaryDirectory() as td:
-        tree = Path(td) / "tree"
-        rep = build_tree(fork, ref_sha, manifest, tree)
+    uv_executable = _repository_uv()
+    workspace = allocate_run_workspace(lab, "sync-shadow")
+    try:
+        tree = workspace.temp_dir / "tree"
+        rep = build_tree(
+            fork,
+            ref_sha,
+            manifest,
+            tree,
+            uv_executable=uv_executable,
+        )
         if args.dry_run:
             print_report(rep, ref_sha, ref_date, None, None, [], set(), False, True)
             return 0
@@ -785,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
         proc = subprocess.run(["git", "merge", "--no-edit", source], cwd=str(lab))
         print(f"merge {source} -> main:", "clean" if proc.returncode == 0 else "CONFLICTS — resolve, then git commit")
         return proc.returncode
+    finally:
+        workspace.cleanup()
     return 0
 
 

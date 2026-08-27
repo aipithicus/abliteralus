@@ -13,7 +13,7 @@ Scrub gate (hard stop): identity tokens and the codename must not appear anywher
 Soft warnings are printed for the private-work vocabulary so you can judge false positives.
 
 Verification (default on): Ruff F on the touched Python files and pytest on the touched test
-files, both in the fork's locked CPU environment (``uv run --frozen``).
+files, both through the repository-pinned uv executable in the fork's locked CPU environment.
 
 Stdlib only. Python >= 3.11.
 """
@@ -24,9 +24,15 @@ import argparse
 import re
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
+
+from abliteralus.run_paths import allocate_run_workspace
+from abliteralus.toolchain import (
+    UvToolchainError,
+    repository_tool_environment,
+    resolve_uv,
+)
 
 HERE = Path(__file__).resolve().parent
 LAB_ROOT = HERE.parent.parent
@@ -38,6 +44,13 @@ SOFT_TOKENS = ["spc", "bars", "swendsen", "potts", "superparamagnetic"]
 def die(msg: str, code: int = 2):
     print(f"writeback: error: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+def repository_uv() -> Path:
+    try:
+        return resolve_uv(LAB_ROOT)
+    except UvToolchainError as error:
+        die(str(error))
 
 
 def git(args: list[str], cwd: Path, *, check: bool = True, input_bytes: bytes | None = None) -> str:
@@ -153,7 +166,15 @@ def already_exported(fork: Path, commit: str, patch: str | None = None, base: st
     return None
 
 
-def cmd_squash(lab: Path, fork: Path, branch: str, base: str, ren: Renamer, no_verify: bool) -> int:
+def cmd_squash(
+    lab: Path,
+    fork: Path,
+    branch: str,
+    base: str,
+    ren: Renamer,
+    no_verify: bool,
+    uv_executable: Path | None,
+) -> int:
     """Squash an unpushed fork branch to one signed, subject-only commit and record the lab mapping."""
     if not git(["rev-parse", "-q", "--verify", f"refs/heads/{branch}"], fork, check=False).strip():
         die(f"fork branch {branch!r} does not exist")
@@ -180,7 +201,12 @@ def cmd_squash(lab: Path, fork: Path, branch: str, base: str, ren: Renamer, no_v
     git(["reset", "-q", "--soft", base], fork)
     git(["commit", "-q", "-S", "-m", subject], fork)
     head = git(["log", "-1", "--format=%h %G? %GS"], fork).strip()
-    ok = True if no_verify else verify(fork, touched)  # verify on the squashed branch itself
+    if no_verify:
+        ok = True
+    else:
+        if uv_executable is None:
+            raise AssertionError("verified squash requires the repository uv executable")
+        ok = verify(fork, touched, uv_executable)
     git(["checkout", "-q", original], fork)
     record_exports(carried, "squash")
     draft = LAB_ROOT / "private" / "pr-drafts" / f"{branch.replace('/', '__')}.md"
@@ -299,17 +325,48 @@ def append_pr_draft(branch: str, subject: str, body: str, touched: list[str], he
     return path
 
 
-def verify(fork: Path, touched: list[str]) -> bool:
+def verify(fork: Path, touched: list[str], uv_executable: Path) -> bool:
     py = [p for p in touched if p.endswith(".py")]
     tests = [p for p in py if p.startswith("tests/")]
     ok = True
+    environment = repository_tool_environment(LAB_ROOT)
     if py:
-        proc = subprocess.run(["uv", "run", "--frozen", "ruff", "check", "--select", "F", *py], cwd=str(fork))
+        proc = subprocess.run(
+            [
+                str(uv_executable),
+                "run",
+                "--frozen",
+                "ruff",
+                "check",
+                "--select",
+                "F",
+                *py,
+            ],
+            cwd=str(fork),
+            env=environment,
+            timeout=300,
+        )
         ok &= proc.returncode == 0
         print("verify: ruff F", "ok" if proc.returncode == 0 else "FAILED")
     if tests:
-        proc = subprocess.run(["uv", "run", "--frozen", "pytest", "-q", "--no-cov", "-p", "no:randomly", *tests],
-                              cwd=str(fork), capture_output=True, text=True)
+        proc = subprocess.run(
+            [
+                str(uv_executable),
+                "run",
+                "--frozen",
+                "pytest",
+                "-q",
+                "--no-cov",
+                "-p",
+                "no:randomly",
+                *tests,
+            ],
+            cwd=str(fork),
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
         tail = [line for line in proc.stdout.strip().split("\n") if line][-1:]
         print("verify: pytest", "ok" if proc.returncode == 0 else "FAILED", "-", *tail)
         ok &= proc.returncode == 0
@@ -343,9 +400,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.squash:
         if not args.branch:
             ap.error("--squash requires --branch")
-        return cmd_squash(lab, fork, args.branch, args.base, ren, args.no_verify)
+        uv_executable = None if args.no_verify else repository_uv()
+        return cmd_squash(
+            lab,
+            fork,
+            args.branch,
+            args.base,
+            ren,
+            args.no_verify,
+            uv_executable,
+        )
     if not args.commit or not args.branch:
         ap.error("a lab commit and --branch are required (or use --list / --squash)")
+
+    uv_executable = None if args.no_verify else repository_uv()
 
     commit = git(["rev-parse", "--verify", f"{args.commit}^{{commit}}"], lab).strip()
     if not git(["branch", "--contains", commit, args.lab_branch], lab).strip():
@@ -386,20 +454,28 @@ def main(argv: list[str] | None = None) -> int:
         git(["checkout", "-q", args.branch], fork)
     else:
         git(["checkout", "-q", "-b", args.branch, args.base], fork)
-    with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False, encoding="utf-8", newline="\n") as fh:
-        fh.write(patch)
-        patch_path = fh.name
+    workspace = allocate_run_workspace(lab, "sync-writeback")
+    patch_path = workspace.path / "export.patch"
+    patch_path.write_text(patch, encoding="utf-8", newline="\n")
     proc = subprocess.run(["git", "am", "-S", "--3way", patch_path], cwd=str(fork), capture_output=True, text=True)
     if proc.returncode != 0:
+        workspace.record_result(proc.returncode)
         print(proc.stdout, proc.stderr, sep="\n")
         print(f"git am failed; branch {args.branch} left checked out in the fork for resolution "
               f"(git am --continue / --abort). Patch: {patch_path}")
         return 1
+    workspace.record_result(0)
+    workspace.cleanup()
     head = git(["log", "-1", "--format=%h %G? %GS"], fork).strip()
     print(f"fork {args.branch}: {head}")
     draft = (append_pr_draft if args.onto else write_pr_draft)(args.branch, subject, body, touched, head.split(" ")[0])
     print(f"PR description draft: {draft}")
-    ok = True if args.no_verify else verify(fork, touched)
+    if args.no_verify:
+        ok = True
+    else:
+        if uv_executable is None:
+            raise AssertionError("verified writeback requires the repository uv executable")
+        ok = verify(fork, touched, uv_executable)
     git(["checkout", "-q", original], fork)
     print(f"fork back on {original}; branch {args.branch} ready" if ok else f"verification FAILED on {args.branch}")
     return 0 if ok else 1

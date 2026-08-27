@@ -24,7 +24,7 @@ From Nushell:
 
 ```nu
 (
-  uv run --frozen --extra gguf abliteralus-surgery preflight
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra gguf abliteralus-surgery preflight
     --config experiments/surgery/local-qwen25-0.5b.yaml
 )
 
@@ -180,7 +180,7 @@ preflight issue and resume only that stage:
 
 ```nu
 (
-  uv run --frozen --extra gguf abliteralus-surgery postprocess
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra gguf abliteralus-surgery postprocess
     --config experiments/surgery/local-qwen25-0.5b.yaml
     --run-dir outputs/surgery/qwen25-0.5b-local-mini/RUN_ID
 )
@@ -194,7 +194,7 @@ the local inference executable, keep the verified GGUF files in place and use:
 
 ```nu
 (
-  uv run --frozen --extra gguf abliteralus-surgery smoke
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra gguf abliteralus-surgery smoke
     --config experiments/surgery/local-qwen25-0.5b.yaml
     --run-dir outputs/surgery/qwen25-0.5b-local-mini/RUN_ID
 )
@@ -213,11 +213,20 @@ experiment launch. Provisioning:
 2. Build a deterministic bundle containing only `abliteralus/`, the exact
    `private/surgery_artifacts/src/` implementation subtree, `pyproject.toml`,
    `uv.lock`, `README.md`, and the selected experiment YAML.
-3. Install pinned `uv` in an isolated, versioned tool environment.
+3. Restore the digest-bound Linux `uv` declared by `deps/uv/pin.json` into an
+   isolated, versioned tool directory without invoking `pip` or searching `PATH` for uv.
 4. Materialize a dependency-only environment keyed by the exact lockfile hash
    and the requested `base` or `gguf` dependency variant.
-5. Retain uv, Hugging Face, and XDG caches beneath the persistent Studio home.
+5. Clear ambient uv/Python configuration, retain project configuration, and keep uv,
+   Hugging Face, XDG, bytecode, configuration, and temporary state beneath the
+   persistent Studio home.
 6. Stop compute if and only if this invocation started it.
+
+The AI Development Studio image's `python` command is the one explicit bootstrap
+prerequisite. Provisioning invokes it in isolated mode once, records its exact
+`sys.executable`, and fixes uv to that interpreter with Python downloads disabled.
+The uv executable itself, its archive, and all application dependencies remain bound
+to `deps/uv/pin.json` and `uv.lock`.
 
 A normal surgery launch then:
 
@@ -236,10 +245,11 @@ contain the executed code.
 Lightning profiles must use a remote-addressable `OWNER/MODEL` source; local
 checkpoint directories are never added to the upload bundle.
 
-Install the current pinned Lightning SDK and authenticate:
+Materialize the current pinned Lightning SDK through the repository uv executable,
+then authenticate:
 
 ```nu
-uv sync --extra lightning
+pwsh -NoProfile -File deps/uv/run-uv.ps1 sync --extra lightning
 lightning login
 ```
 
@@ -250,7 +260,7 @@ Planning is local, does not import the SDK, and does not start paid compute:
 
 ```nu
 (
-  uv run --frozen --extra lightning abliteralus-lightning plan
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra lightning abliteralus-lightning plan
     --config experiments/surgery/lightning-qwen25-7b.yaml
     --teamspace OWNER/TEAMSPACE
     --studio abliteralus-surgery
@@ -263,7 +273,7 @@ Provisioning can also be reviewed locally before it contacts Lightning:
 
 ```nu
 (
-  uv run --frozen --extra lightning abliteralus-lightning provision
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra lightning abliteralus-lightning provision
     --config experiments/surgery/lightning-qwen25-7b.yaml
     --teamspace OWNER/TEAMSPACE
     --studio abliteralus-surgery
@@ -277,7 +287,7 @@ when `uv.lock`, the pinned uv version, or the selected dependency variant change
 
 ```nu
 (
-  uv run --frozen --extra lightning abliteralus-lightning provision
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra lightning abliteralus-lightning provision
     --config experiments/surgery/lightning-qwen25-7b.yaml
     --teamspace OWNER/TEAMSPACE
     --studio abliteralus-surgery
@@ -291,7 +301,7 @@ imports without forwarding `HF_TOKEN`:
 
 ```nu
 (
-  uv run --frozen --extra lightning abliteralus-lightning doctor
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra lightning abliteralus-lightning doctor
     --config experiments/surgery/lightning-qwen25-7b.yaml
     --teamspace OWNER/TEAMSPACE
     --studio abliteralus-surgery
@@ -302,7 +312,7 @@ Run only after reviewing that plan:
 
 ```nu
 (
-  uv run --frozen --extra lightning abliteralus-lightning run
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra lightning abliteralus-lightning run
     --config experiments/surgery/lightning-qwen25-7b.yaml
     --teamspace OWNER/TEAMSPACE
     --studio abliteralus-surgery
@@ -316,7 +326,7 @@ local allocation deadline and a remote compute lease:
 
 ```nu
 (
-  uv run --frozen --extra lightning abliteralus-lightning run
+  pwsh -NoProfile -File deps/uv/run-uv.ps1 run --frozen --extra lightning abliteralus-lightning run
     --config experiments/surgery/lightning-qwen25-7b.yaml
     --teamspace OWNER/TEAMSPACE
     --studio abliteralus-surgery
@@ -415,6 +425,11 @@ $HOME/.abliteralus/
   cache/uv/
   cache/huggingface/
   cache/xdg/
+  cache/python-bytecode/
+  configuration/user/
+  configuration/system/uv/uv.toml
+  data/xdg/
+  temp/
   bundles/
   runs/<run-id>/
 ```

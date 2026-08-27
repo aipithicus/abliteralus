@@ -97,10 +97,10 @@ not interchangeable with fork-produced ones; cached activations (plain safetenso
 ## Running the vendored tests
 
 ```
-uv sync --extra dev                 # CUDA torch per pyproject; fresh uv.lock (never the fork's)
-uv run python private/sync/airgap_check.py
+pwsh -NoProfile -File deps/uv/run-uv.ps1 sync --extra dev
+pwsh -NoProfile -File deps/uv/run-uv.ps1 run python private/sync/airgap_check.py
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-uv run pytest -q                    # the vendored core tests are the extraction's acceptance test
+pwsh -NoProfile -File deps/uv/run-uv.ps1 run pytest -q
 ```
 
 No `PYTORCH_CUDA_ALLOC_CONF` workaround is needed: the `fixes` branch carries the win32

@@ -69,6 +69,7 @@ def _git(repo: Path, *arguments: str) -> None:
 def _minimal_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / "abliteralus").mkdir(parents=True)
+    (repo / "deps/uv").mkdir(parents=True)
     (repo / "private/surgery_artifacts/src/surgery_artifacts").mkdir(parents=True)
     (repo / "abliteralus/module.py").write_text("VALUE = 1\n", encoding="utf-8")
     (repo / "private/secret.txt").write_text("not for upload\n", encoding="utf-8")
@@ -78,6 +79,8 @@ def _minimal_repo(tmp_path: Path) -> Path:
     (repo / "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n", encoding="utf-8")
     (repo / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     (repo / "README.md").write_text("runtime\n", encoding="utf-8")
+    repository_pin = Path(__file__).resolve().parents[1] / "deps/uv/pin.json"
+    (repo / "deps/uv/pin.json").write_bytes(repository_pin.read_bytes())
     _git(repo, "init")
     _git(repo, "add", ".")
     _git(
@@ -102,12 +105,14 @@ def test_runtime_selection_excludes_private_and_test_material():
             "pyproject.toml",
             "uv.lock",
             "README.md",
+            "deps/uv/pin.json",
         ]
     )
 
     assert selected == [
         "README.md",
         "abliteralus/core.py",
+        "deps/uv/pin.json",
         "pyproject.toml",
         "uv.lock",
     ]
@@ -135,6 +140,10 @@ def test_plan_is_shell_safe_and_contains_no_forwarded_secret_value(tmp_path, mon
     assert plan.runtime.uv_version == "0.12.4"
     assert "private/surgery_artifacts/src" in plan.command
     assert "private/secret_manager" not in plan.command
+    assert "${PYTHONPATH:+:$PYTHONPATH}" not in plan.command
+    assert "XDG_CONFIG_HOME" in plan.command
+    assert "PYTHONNOUSERSITE=1" in plan.command
+    assert "compgen -A variable" in plan.command
 
 
 def test_plan_records_explicit_ordered_allocation_policy(tmp_path):
@@ -172,6 +181,29 @@ def test_runtime_identity_is_lock_addressed_and_uses_persistent_caches(tmp_path)
     assert first.environment == f".abliteralus/runtimes/{first.key}"
     assert first.uv_cache == ".abliteralus/cache/uv"
     assert first.hf_home == ".abliteralus/cache/huggingface"
+    assert first.uv_platform == "linux-x86_64-gnu"
+    assert first.uv_archive_url.endswith("uv-x86_64-unknown-linux-gnu.tar.gz")
+
+
+def test_runtime_identity_includes_exact_uv_pin_bytes(tmp_path):
+    repo = _minimal_repo(tmp_path)
+    spec = _spec(tmp_path)
+
+    first = build_runtime_layout(repo, spec)
+    pin_path = repo / "deps/uv/pin.json"
+    pin_path.write_bytes(pin_path.read_bytes() + b"\n")
+    second = build_runtime_layout(repo, spec)
+
+    assert first.uv_pin_sha256 != second.uv_pin_sha256
+    assert first.key != second.key
+
+
+def test_runtime_layout_requires_repository_uv_contract(tmp_path):
+    repo = _minimal_repo(tmp_path)
+    (repo / "deps/uv/pin.json").unlink()
+
+    with pytest.raises(LightningConfigError, match="repository uv toolchain is invalid"):
+        build_runtime_layout(repo, _spec(tmp_path))
 
 
 def test_provision_plan_owns_install_and_sync_work(tmp_path):
@@ -187,15 +219,25 @@ def test_provision_plan_owns_install_and_sync_work(tmp_path):
         max_runtime=3600,
     )
 
-    assert "uv==0.12.4" in plan.command
+    assert "pip install" not in plan.command
+    assert "python -m venv" not in plan.command
+    assert plan.runtime.uv_archive_url in plan.command
+    assert plan.runtime.uv_archive_sha256 in plan.command
+    assert "urllib.request.urlopen" in plan.command
     assert "uv sync --frozen --no-dev --no-install-project" in plan.command
     assert "UV_PROJECT_ENVIRONMENT" in plan.command
+    assert 'UV_PYTHON="$ABLITERALUS_BOOTSTRAP_PYTHON"' in plan.command
+    assert "ABLITERALUS_BOOTSTRAP_PYTHON" in plan.command
+    assert "XDG_CONFIG_HOME" in plan.command
+    assert "PYTHONNOUSERSITE=1" in plan.command
+    assert "compgen -A variable" in plan.command
     assert plan.runtime.environment in plan.command
     assert "HF_TOKEN" not in json.dumps(plan.to_dict())
     assert plan.max_runtime == 3600
 
     compile(lightning._runtime_probe_script(plan.runtime, write_marker=True), "probe", "exec")
     compile(lightning._runtime_probe_script(plan.runtime, write_marker=False), "probe", "exec")
+    compile(lightning._remote_uv_install_script(plan.runtime), "uv-installer", "exec")
 
 
 @pytest.mark.parametrize("teamspace", ["", "owner", "owner/team/extra", "-bad/team"])
@@ -222,6 +264,7 @@ def test_bundle_is_deterministic_and_allowlists_only_artifact_private_tree(tmp_p
     with zipfile.ZipFile(first) as archive:
         names = set(archive.namelist())
     assert "abliteralus/module.py" in names
+    assert "deps/uv/pin.json" in names
     assert "experiment.yaml" in names
     assert "bundle-manifest.json" in names
     assert "private/surgery_artifacts/src/surgery_artifacts/__init__.py" in names
@@ -1002,9 +1045,7 @@ def test_collect_capsule_records_local_verification_before_release(tmp_path, mon
     assert _FakeStudio.instances[-1].stopped is True
 
 
-def test_failed_capsule_run_collects_diagnostics_without_requesting_capsule(
-    tmp_path, monkeypatch
-):
+def test_failed_capsule_run_collects_diagnostics_without_requesting_capsule(tmp_path, monkeypatch):
     spec = _spec(tmp_path)
     plan = build_lightning_plan(
         spec,
@@ -1035,9 +1076,7 @@ def test_failed_capsule_run_collects_diagnostics_without_requesting_capsule(
         )
 
     result = json.loads(
-        (tmp_path / "result-capsule-failed/lightning-result.json").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / "result-capsule-failed/lightning-result.json").read_text(encoding="utf-8")
     )
     assert "run-manifest.json" in result["downloaded"]
     assert result["capsule_validation"] is None

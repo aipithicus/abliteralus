@@ -27,10 +27,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Sequence
 
 from abliteralus.surgery_bench import SurgeryExperimentSpec, load_experiment_spec
+from abliteralus.toolchain import UvToolchainError, load_uv_pin
 
 
-UV_VERSION = "0.12.4"
-RUNTIME_SCHEMA_VERSION = 1
+RUNTIME_SCHEMA_VERSION = 2
 DEFAULT_REMOTE_ROOT = ".abliteralus"
 DEFAULT_ALLOCATION_TIMEOUT_SECONDS = 900.0
 DEFAULT_ALLOCATION_RETRY_SECONDS = 30.0
@@ -59,7 +59,7 @@ _MACHINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _PATH_SEGMENT = re.compile(r"\.?[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 _RUNTIME_ROOTS = ("abliteralus/", "private/surgery_artifacts/src/")
-_RUNTIME_FILES = {"pyproject.toml", "uv.lock", "README.md"}
+_RUNTIME_FILES = {"pyproject.toml", "uv.lock", "README.md", "deps/uv/pin.json"}
 
 
 class LightningConfigError(ValueError):
@@ -216,9 +216,17 @@ def build_runtime_bundle(
 class LightningRuntime:
     remote_root: str
     lock_sha256: str
+    uv_pin_sha256: str
     variant: str
     key: str
     uv_version: str
+    uv_platform: str
+    uv_archive_url: str
+    uv_archive_sha256: str
+    uv_archive_size: int
+    uv_archive_member: str
+    uv_executable_sha256: str
+    uv_executable_size: int
     uv_environment: str
     uv_executable: str
     environment: str
@@ -226,6 +234,11 @@ class LightningRuntime:
     uv_cache: str
     hf_home: str
     xdg_cache: str
+    xdg_config_home: str
+    xdg_config_dirs: str
+    xdg_data: str
+    temporary: str
+    python_bytecode: str
     required_imports: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -233,9 +246,17 @@ class LightningRuntime:
             "schema_version": RUNTIME_SCHEMA_VERSION,
             "remote_root": self.remote_root,
             "lock_sha256": self.lock_sha256,
+            "uv_pin_sha256": self.uv_pin_sha256,
             "variant": self.variant,
             "key": self.key,
             "uv_version": self.uv_version,
+            "uv_platform": self.uv_platform,
+            "uv_archive_url": self.uv_archive_url,
+            "uv_archive_sha256": self.uv_archive_sha256,
+            "uv_archive_size": self.uv_archive_size,
+            "uv_archive_member": self.uv_archive_member,
+            "uv_executable_sha256": self.uv_executable_sha256,
+            "uv_executable_size": self.uv_executable_size,
             "uv_environment": self.uv_environment,
             "uv_executable": self.uv_executable,
             "environment": self.environment,
@@ -243,6 +264,11 @@ class LightningRuntime:
             "uv_cache": self.uv_cache,
             "hf_home": self.hf_home,
             "xdg_cache": self.xdg_cache,
+            "xdg_config_home": self.xdg_config_home,
+            "xdg_config_dirs": self.xdg_config_dirs,
+            "xdg_data": self.xdg_data,
+            "temporary": self.temporary,
+            "python_bytecode": self.python_bytecode,
             "required_imports": list(self.required_imports),
         }
 
@@ -257,22 +283,39 @@ def build_runtime_layout(
     """Describe a persistent Studio runtime without contacting Lightning."""
 
     remote_root = _require_remote_root(remote_root)
-    lock_path = repo_root.resolve() / "uv.lock"
+    repo_root = repo_root.resolve()
+    lock_path = repo_root / "uv.lock"
     if not lock_path.is_file():
         raise LightningConfigError(f"uv.lock is unavailable: {lock_path}")
     lock_sha256 = hashlib.sha256(lock_path.read_bytes()).hexdigest()
     variant = "gguf" if spec.gguf_enabled and not skip_gguf else "base"
-    key = f"{lock_sha256[:20]}-{variant}"
     root = PurePosixPath(remote_root)
-    uv_environment = root / "tools" / "uv" / UV_VERSION
+    try:
+        uv_pin = load_uv_pin(repo_root)
+        uv_platform = uv_pin.platform("linux-x86_64-gnu")
+    except UvToolchainError as exc:
+        raise LightningConfigError(f"repository uv toolchain is invalid: {exc}") from exc
+    uv_pin_sha256 = hashlib.sha256(uv_pin.path.read_bytes()).hexdigest()
+    identity = f"{lock_sha256}:{uv_pin_sha256}:{variant}".encode()
+    key = f"{hashlib.sha256(identity).hexdigest()[:24]}-{variant}"
+    uv_primary = uv_platform.primary_file()
+    uv_environment = root / "tools" / "uv" / uv_pin.version
     environment = root / "runtimes" / key
     required_imports = _BASE_RUNTIME_IMPORTS + (_GGUF_RUNTIME_IMPORTS if variant == "gguf" else ())
     return LightningRuntime(
         remote_root=remote_root,
         lock_sha256=lock_sha256,
+        uv_pin_sha256=uv_pin_sha256,
         variant=variant,
         key=key,
-        uv_version=UV_VERSION,
+        uv_version=uv_pin.version,
+        uv_platform=uv_platform.key,
+        uv_archive_url=uv_platform.archive_url,
+        uv_archive_sha256=uv_platform.archive_sha256,
+        uv_archive_size=uv_platform.archive_size,
+        uv_archive_member=uv_primary.archive_path,
+        uv_executable_sha256=uv_primary.sha256,
+        uv_executable_size=uv_primary.size,
         uv_environment=str(uv_environment),
         uv_executable=str(uv_environment / "bin" / "uv"),
         environment=str(environment),
@@ -280,6 +323,11 @@ def build_runtime_layout(
         uv_cache=str(root / "cache" / "uv"),
         hf_home=str(root / "cache" / "huggingface"),
         xdg_cache=str(root / "cache" / "xdg"),
+        xdg_config_home=str(root / "configuration" / "user"),
+        xdg_config_dirs=str(root / "configuration" / "system"),
+        xdg_data=str(root / "data" / "xdg"),
+        temporary=str(root / "temp"),
+        python_bytecode=str(root / "cache" / "python-bytecode"),
         required_imports=required_imports,
     )
 
@@ -288,13 +336,23 @@ def _home_path(path: str) -> str:
     return f'"$HOME"/{shlex.quote(path)}'
 
 
+def _clear_remote_tool_environment_shell() -> str:
+    return (
+        "for prefix in UV_ PYTHON; do while IFS= read -r variable; "
+        'do unset "$variable"; done < <(compgen -A variable "$prefix" || true); done'
+    )
+
+
 def _runtime_expected(runtime: LightningRuntime) -> dict[str, Any]:
     return {
         "schema_version": RUNTIME_SCHEMA_VERSION,
         "lock_sha256": runtime.lock_sha256,
+        "uv_pin_sha256": runtime.uv_pin_sha256,
         "variant": runtime.variant,
         "key": runtime.key,
         "uv_version": runtime.uv_version,
+        "uv_archive_sha256": runtime.uv_archive_sha256,
+        "uv_executable_sha256": runtime.uv_executable_sha256,
     }
 
 
@@ -363,9 +421,94 @@ def _runtime_probe_shell(runtime: LightningRuntime, *, write_marker: bool = Fals
             f"test -x {python}",
             f"test -x {uv}",
             (
-                f"env ABLITERALUS_RUNTIME_MARKER={marker} "
-                f"ABLITERALUS_UV_EXECUTABLE={uv} {python} -c {script}"
+                "env -u PYTHONHOME -u PYTHONPATH PYTHONNOUSERSITE=1 PYTHONUTF8=1 "
+                f"ABLITERALUS_RUNTIME_MARKER={marker} "
+                f"ABLITERALUS_UV_EXECUTABLE={uv} {python} -I -B -c {script}"
             ),
+        ]
+    )
+
+
+def _remote_uv_install_script(runtime: LightningRuntime) -> str:
+    """Build a stdlib-only, digest-verified installer for the pinned Linux uv."""
+
+    config = json.dumps(
+        {
+            "archive_member": runtime.uv_archive_member,
+            "archive_sha256": runtime.uv_archive_sha256,
+            "archive_size": runtime.uv_archive_size,
+            "archive_url": runtime.uv_archive_url,
+            "executable_sha256": runtime.uv_executable_sha256,
+            "executable_size": runtime.uv_executable_size,
+            "version": runtime.uv_version,
+        },
+        sort_keys=True,
+    )
+    return "\n".join(
+        [
+            "import hashlib, hmac, json, os, pathlib, secrets, tarfile, urllib.request",
+            f"config = json.loads({config!r})",
+            "root = pathlib.Path(os.environ['ABLITERALUS_UV_HOME']).resolve()",
+            "target = root / 'bin' / 'uv'",
+            "expected_executable = (config['executable_size'], config['executable_sha256'])",
+            "def fingerprint(path):",
+            "    if path.is_symlink() or not path.is_file():",
+            "        return None",
+            "    digest = hashlib.sha256()",
+            "    size = 0",
+            "    with path.open('rb') as stream:",
+            "        while chunk := stream.read(1024 * 1024):",
+            "            size += len(chunk)",
+            "            digest.update(chunk)",
+            "    return size, digest.hexdigest()",
+            "if fingerprint(target) == expected_executable:",
+            "    print(f\"uv {config['version']} already verified at {target}\")",
+            "    raise SystemExit(0)",
+            "target.parent.mkdir(parents=True, exist_ok=True)",
+            "token = f'{os.getpid()}-{secrets.token_hex(8)}'",
+            "archive_path = root / f'.uv-download-{token}.tar.gz'",
+            "staged_path = root / f'.uv-install-{token}'",
+            "try:",
+            "    archive_digest = hashlib.sha256()",
+            "    archive_size = 0",
+            "    with urllib.request.urlopen(config['archive_url'], timeout=120) as response:",
+            "        with archive_path.open('xb') as destination:",
+            "            while chunk := response.read(1024 * 1024):",
+            "                archive_size += len(chunk)",
+            "                if archive_size > config['archive_size']:",
+            "                    raise RuntimeError('uv archive exceeded its declared size')",
+            "                archive_digest.update(chunk)",
+            "                destination.write(chunk)",
+            "            destination.flush()",
+            "            os.fsync(destination.fileno())",
+            "    if archive_size != config['archive_size']:",
+            '        raise RuntimeError(f"uv archive size mismatch: {archive_size}")',
+            "    if not hmac.compare_digest(archive_digest.hexdigest(), config['archive_sha256']):",
+            "        raise RuntimeError('uv archive SHA-256 mismatch')",
+            "    with tarfile.open(archive_path, mode='r:gz') as archive:",
+            "        member = archive.getmember(config['archive_member'])",
+            "        if not member.isfile():",
+            "            raise RuntimeError('pinned uv archive member is not a regular file')",
+            "        source = archive.extractfile(member)",
+            "        if source is None:",
+            "            raise RuntimeError('pinned uv archive member could not be read')",
+            "        executable_size = 0",
+            "        with source, staged_path.open('xb') as destination:",
+            "            while chunk := source.read(1024 * 1024):",
+            "                executable_size += len(chunk)",
+            "                if executable_size > config['executable_size']:",
+            "                    raise RuntimeError('uv executable exceeded its declared size')",
+            "                destination.write(chunk)",
+            "            destination.flush()",
+            "            os.fsync(destination.fileno())",
+            "    if fingerprint(staged_path) != expected_executable:",
+            "        raise RuntimeError('uv executable digest or size mismatch')",
+            "    staged_path.chmod(0o755)",
+            "    os.replace(staged_path, target)",
+            "    print(f\"installed verified uv {config['version']} at {target}\")",
+            "finally:",
+            "    archive_path.unlink(missing_ok=True)",
+            "    staged_path.unlink(missing_ok=True)",
         ]
     )
 
@@ -531,6 +674,11 @@ def build_provision_plan(
         runtime.uv_cache,
         runtime.hf_home,
         runtime.xdg_cache,
+        runtime.xdg_config_home,
+        str(PurePosixPath(runtime.xdg_config_dirs) / "uv"),
+        runtime.xdg_data,
+        runtime.temporary,
+        runtime.python_bytecode,
         str(root / "bundles"),
         str(root / "runs"),
     ]
@@ -538,26 +686,49 @@ def build_provision_plan(
     prepare_command = "bash -lc " + shlex.quote("; ".join(["set -euo pipefail", mkdir]))
 
     uv_environment = _home_path(runtime.uv_environment)
-    uv_python = _home_path(str(PurePosixPath(runtime.uv_environment) / "bin" / "python"))
     uv = _home_path(runtime.uv_executable)
     runtime_environment = _home_path(runtime.environment)
+    uv_install_script = shlex.quote(_remote_uv_install_script(runtime))
     sync_arguments = ["sync", "--frozen", "--no-dev", "--no-install-project"]
     if runtime.variant == "gguf":
         sync_arguments.extend(["--extra", "gguf"])
     sync_command = " ".join([uv, *map(shlex.quote, sync_arguments)])
+    temporary = _home_path(runtime.temporary)
+    python_bytecode = _home_path(runtime.python_bytecode)
+    xdg_config_home = _home_path(runtime.xdg_config_home)
+    xdg_config_dirs = _home_path(runtime.xdg_config_dirs)
+    xdg_data = _home_path(runtime.xdg_data)
+    system_uv_config = _home_path(str(PurePosixPath(runtime.xdg_config_dirs) / "uv" / "uv.toml"))
     commands = [
         "set -euo pipefail",
+        _clear_remote_tool_environment_shell(),
         mkdir,
-        f"python -m venv {uv_environment}",
+        f": > {system_uv_config}",
         (
-            f"{uv_python} -m pip install --disable-pip-version-check "
-            f"{shlex.quote(f'uv=={runtime.uv_version}')}"
+            "ABLITERALUS_BOOTSTRAP_PYTHON=$(python -I -B -c "
+            + shlex.quote("import sys; print(sys.executable)")
+            + ")"
         ),
-        (f"python -m zipfile -e {_home_path(remote_bundle)} {_home_path(remote_source)}"),
+        'test -x "$ABLITERALUS_BOOTSTRAP_PYTHON"',
+        (
+            f"env TMP={temporary} TEMP={temporary} TMPDIR={temporary} "
+            f"ABLITERALUS_UV_HOME={uv_environment} "
+            '"$ABLITERALUS_BOOTSTRAP_PYTHON" -I -B '
+            f"-c {uv_install_script}"
+        ),
+        (
+            '"$ABLITERALUS_BOOTSTRAP_PYTHON" -I -B -m zipfile -e '
+            f"{_home_path(remote_bundle)} {_home_path(remote_source)}"
+        ),
         f"cd {_home_path(remote_source)}",
         (
-            f"env UV_CACHE_DIR={_home_path(runtime.uv_cache)} "
+            f"env TMP={temporary} TEMP={temporary} TMPDIR={temporary} "
+            f"PYTHONNOUSERSITE=1 PYTHONPYCACHEPREFIX={python_bytecode} PYTHONUTF8=1 "
+            f"XDG_CACHE_HOME={_home_path(runtime.xdg_cache)} "
+            f"XDG_CONFIG_HOME={xdg_config_home} XDG_CONFIG_DIRS={xdg_config_dirs} "
+            f"XDG_DATA_HOME={xdg_data} UV_CACHE_DIR={_home_path(runtime.uv_cache)} "
             f"UV_PROJECT_ENVIRONMENT={runtime_environment} "
+            'UV_PYTHON="$ABLITERALUS_BOOTSTRAP_PYTHON" '
             f"UV_PYTHON_DOWNLOADS=never {sync_command}"
         ),
         _runtime_probe_shell(runtime, write_marker=True),
@@ -682,6 +853,7 @@ def build_lightning_plan(
 
     surgery_arguments = [
         runtime_python,
+        "-B",
         "-m",
         "surgery_artifacts.integration",
         "run",
@@ -698,15 +870,41 @@ def build_lightning_plan(
         token if token.startswith('"$HOME"/') else shlex.quote(token) for token in surgery_arguments
     )
     doctor_shell = _runtime_probe_shell(runtime)
+    runtime_directories = (
+        remote_source,
+        runtime.hf_home,
+        runtime.xdg_cache,
+        runtime.xdg_config_home,
+        str(PurePosixPath(runtime.xdg_config_dirs) / "uv"),
+        runtime.xdg_data,
+        runtime.temporary,
+        runtime.python_bytecode,
+    )
+    mkdir = "mkdir -p " + " ".join(_home_path(path) for path in runtime_directories)
+    system_uv_config = _home_path(str(PurePosixPath(runtime.xdg_config_dirs) / "uv" / "uv.toml"))
     commands = [
         "set -euo pipefail",
+        _clear_remote_tool_environment_shell(),
         doctor_shell,
-        f"mkdir -p {_home_path(remote_source)} {_home_path(runtime.hf_home)} {_home_path(runtime.xdg_cache)}",
-        (f"python -m zipfile -e {_home_path(remote_bundle)} {_home_path(remote_source)}"),
+        mkdir,
+        f": > {system_uv_config}",
+        (
+            f"{runtime_python} -I -B -m zipfile -e "
+            f"{_home_path(remote_bundle)} {_home_path(remote_source)}"
+        ),
         f"cd {_home_path(remote_source)}",
-        'export PYTHONPATH="$PWD/private/surgery_artifacts/src${PYTHONPATH:+:$PYTHONPATH}"',
+        'export PYTHONPATH="$PWD/private/surgery_artifacts/src"',
+        (
+            f"export TMP={_home_path(runtime.temporary)} TEMP={_home_path(runtime.temporary)} "
+            f"TMPDIR={_home_path(runtime.temporary)}"
+        ),
         f"export HF_HOME={_home_path(runtime.hf_home)}",
         f"export XDG_CACHE_HOME={_home_path(runtime.xdg_cache)}",
+        f"export XDG_CONFIG_HOME={_home_path(runtime.xdg_config_home)}",
+        f"export XDG_CONFIG_DIRS={_home_path(runtime.xdg_config_dirs)}",
+        f"export XDG_DATA_HOME={_home_path(runtime.xdg_data)}",
+        f"export PYTHONPYCACHEPREFIX={_home_path(runtime.python_bytecode)}",
+        "export PYTHONNOUSERSITE=1 PYTHONUTF8=1",
         surgery_command,
     ]
     return LightningRunPlan(
@@ -1058,7 +1256,9 @@ def _ensure_studio_running(
                         "completed_at": _utc_timestamp(),
                         "duration_seconds": _duration(reconcile_started, clock()),
                         "outcome": (
-                            "stopped_pending" if policy.pending_policy == "stop" else "pending_ended"
+                            "stopped_pending"
+                            if policy.pending_policy == "stop"
+                            else "pending_ended"
                         ),
                     }
                 )
@@ -1693,9 +1893,7 @@ def execute_lightning_plan(
                 downloaded = _download_summary(studio, plan, local_output)
             elif collect == "capsule":
                 if remote_exit_code == 0:
-                    downloaded, capsule_validation = _download_capsule(
-                        studio, plan, local_output
-                    )
+                    downloaded, capsule_validation = _download_capsule(studio, plan, local_output)
                 else:
                     downloaded = _download_summary(studio, plan, local_output)
             elif collect == "all":
