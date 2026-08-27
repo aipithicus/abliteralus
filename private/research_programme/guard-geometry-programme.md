@@ -277,6 +277,38 @@ Schur-complement information.
 hierarchy arm, and full-covariance (anisotropic) fits where 4.8's isotropic
 model is too rigid.
 
+### 4.10 HOPE: neurons as Hilbert–Schmidt operators (arXiv:2607.21366)
+
+Source: `bibliotecha_archive/md-shelf/2607.21366v1-latex.md`. Each neuron is
+lifted to a rank-1 Hilbert–Schmidt operator `f_i = g_i ⊗ w_out,i` in
+`L²(𝒳, P_𝒳; ℝ^c)`, where `P_𝒳` is a Maximum-Entropy Gaussian surrogate built
+from stored normalization statistics (or a one-time calibration pass). The
+neuron Gram matrix `⟨f_i, f_j⟩ = K(i,j)·⟨w_out,i, w_out,j⟩` has closed-form
+ReLU kernels; capacity `‖f_i‖` is scale- and shape-invariant by construction
+(kills the reparametrization symmetry that breaks magnitude pruning). Pruning
+and merging are unified as constrained rank-1 projection with an axiomatically
+derived distortion cost `𝒥` (`𝒥_prune = N‖f_i‖/(E_a − ‖f_i‖)`; merge
+analogous), driven by a greedy receding-horizon rate–distortion loop selecting
+`argmin 𝒥_k/ΔP_k`.
+
+**Roles** (pivot before direct):
+(a) *Core-vs-slack as the compression dual of verdict-as-task* — the H8
+instrument: track the verdict margin along a progressive-compression
+trajectory; structure that **is** the task should resist compression longest.
+(b) *Merging-as-consolidation* — a confound control for H1: if measured
+verdict rank is inflated by feature fragmentation across correlated neurons,
+consolidating merges shrink it; genuine category detectors survive.
+(c) *Methodological through-line* — the same "replace the convenient inner
+product with an honest one" move as whitening (activation space) and the
+landscape Hilbert space (topology): here applied to *neuron* space, giving the
+programme's geometric instruments a dual metric space (neurons-as-functions)
+to act on.
+**Direct application** (deferred): a HOPE-style strategy for the surgery
+bench requires re-deriving the cross-kernels for RMSNorm + SwiGLU (the gated
+form `SiLU(w_g·x)·(w_u·x)` makes the kernel a bivariate Gaussian integral —
+tractable numerically, not erfc-closed-form) and the calibration-pass
+surrogate. Real lift; scoped out of the near term.
+
 ## 5. Hypotheses
 
 Each hypothesis states its measurand, prediction, and falsifier. Both outcomes
@@ -358,6 +390,28 @@ dropped from the writeup.
 likelihood across manifolds (different sample spaces); the norm→radius map is
 fixed before fitting (see §8).
 
+**H8 — The verdict is core, not slack.** Because the verdict is the guard's
+trained task, its machinery should be among the *last* structure destroyed by
+capacity-ordered progressive compression — in sharp contrast to chat-model
+safety behavior, which is empirically shallow and dies early under
+compression. This is the compression dual of the programme's central framing.
+*Measurand*: verdict margin and parse rate tracked along a progressive
+ablation trajectory ordered by a capacity-style dispensability score
+(approximated near-term with existing surgery-bench strategies; HOPE-proper
+per §4.10 later); the margin-vs-parameters-removed curve and its knee,
+sham-compared against random-order ablation at matched parameter counts.
+*Prediction*: a long flat plateau — margin degradation lags the random-order
+control substantially, with a late cliff; neurons whose output weights align
+with the verdict subspace (from H1/P5) are over-represented in the surviving
+core.
+*Falsifier*: margin degrades at or faster than the random-order control — the
+verdict machinery is not privileged capacity, and the verdict-as-task framing
+in §1 loses its strongest structural support. This is the programme's riskiest
+prediction and is deliberately kept falsifiable.
+*Extension (optional)*: the same trajectory run on a chat model's refusal
+behavior yields the two-panel "task vs veneer" comparison — the most
+communicable figure the lab's surgery machinery can produce.
+
 ## 6. Experimental trajectory
 
 Phases are ordered so that every method arm consumes the same frozen inputs
@@ -412,6 +466,15 @@ Gaussian mixture fits (§4.8) with profile-likelihood inference (§4.9);
 Poincaré-disk projection for the figure only.
 *Exit gate*: **H7 resolved**; δ/distortion table + verdict-map figure.
 
+**P9 — Compression trajectory (independent of P8; needs P5 outputs for the
+core-alignment analysis only).** Capacity-ordered progressive ablation via
+existing surgery-bench strategies with a random-order control at matched
+parameter counts; margin/parse tracking per step; overlap analysis between
+the surviving core and the verdict subspace. HOPE-proper (SwiGLU kernels,
+merging, consolidation control for H1) is a stretch goal behind the same
+interface, not a gate.
+*Exit gate*: **H8 resolved**; margin-vs-capacity trajectory figure.
+
 Retrospective analyses of P0 pilot data (notably H2) may be reported as soon
 as available; they do not wait for the phase ladder.
 
@@ -431,6 +494,9 @@ the eventual writeup.
 8. Verdict map on the Poincaré disk: category directions and case activations,
    radius = generality/confidence, with δ/distortion table inset (H7;
    conditional).
+9. Margin vs parameters-removed trajectory, capacity-ordered vs random-order,
+   knee marked (H8); optional second panel: chat-refusal comparator
+   ("task vs veneer").
 
 Narrative arc for human consumption: *a safety classifier's verdict is not a
 gate bolted onto a capability core but a task-defining structure; here is its
@@ -464,6 +530,13 @@ without fooling itself.*
   distortion at matched dimension, never likelihoods across different sample
   spaces; and the norm→radius embedding map for H7 is a researcher degree of
   freedom that must be fixed (and recorded) before any hyperbolic fit runs.
+- **HOPE provenance and transfer gap**: 2607.21366 is proof-of-concept scale,
+  derived for BatchNorm + positively homogeneous activations on FC/conv
+  architectures; its closed-form kernels do not transfer to RMSNorm + SwiGLU
+  without re-derivation. H8's near-term form therefore uses the framework's
+  *concept* (capacity-ordered progressive reduction with a matched random
+  control), not its specific estimator; any "HOPE score" claim waits for the
+  SwiGLU kernels.
 
 ## 9. Assets
 
@@ -480,6 +553,7 @@ Corpus papers on the critical path: 2112.02580 (mxPBF), 2307.15213
 (centering), 2605.20681 (scale-calibrated MoM), 2505.18844 (product medians),
 2106.06375 (SN mixtures), 2208.12435 (landscapes + energy tests), 2504.16318
 (cosine hygiene). Conditional path (H7/P8): 2604.24895 (hyperbolic Riemannian
-Gaussian mixtures), 2605.00363 (anisotropic HWN inference). Reserve:
+Gaussian mixtures), 2605.00363 (anisotropic HWN inference). Conditional path
+(H8/P9): 2607.21366 (HOPE; `bibliotecha_archive/md-shelf/`). Reserve:
 2209.03318 / 2603.14815 / 2509.11435 (Wasserstein family), 2601.10992 (metric
 scaling), 2605.08001 (median scale selection).
