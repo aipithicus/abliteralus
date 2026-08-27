@@ -147,6 +147,15 @@ every run an isolated, atomically allocated, self-describing workdir; the
 surgery-bench run-directory allocation is race-free. Baselines are reproducible
 from a commit plus a dataset digest.
 
+**The interrogation layer** — [abliteralus/safety_evaluation.py](../../abliteralus/safety_evaluation.py)
+deterministically parses guard completions into canonical verdicts with
+S-code extraction, and the surgery bench gates artifact production on an
+external safety evaluation. Note the reflexivity: in the nominal (chat
+subject) lane this machinery is the *instrument* interrogating the operated
+model; in this programme the same species is the *patient*. Post-operative
+interrogation of the guard therefore needs no new parser and no LLM judge —
+the primary behavior is machine-verifiable by construction (P10).
+
 **The ThermoMapper stack** — the product-median machinery of §4.3–4.4 is
 already operational in the lab's own C# codebase
 (`D:\aghado01\ThermoMapper\src\maths\geometry\`): `RiemannianProductManifold`
@@ -633,12 +642,49 @@ interface, not a gate.
 Retrospective analyses of P0 pilot data (notably H2) may be reported as soon
 as available; they do not wait for the phase ladder.
 
+**P10 — Post-operative interrogation (behavioral battery; runs on P3+ winner
+arms at selected doses, and on any mirror-lane weight surgery).** The nominal
+subject's post-op battery — judge-mediated refusal rates, full-vocab KL
+budgets, broad capability benchmarks — inverts on the guard in four ways:
+the primary behavior is machine-parseable (no judge, exact confusion
+matrices); there is no separate capability axis (held-out discrimination
+quality *is* the capability); the safety-evaluation gate's question flips
+from "did the op make the subject dangerous?" to "did the op blind the
+instrument?"; and steering interventions are dose-parameterized, so post-op
+is a battery × dose grid, not one A/B. The battery:
+
+1. *Held-out discrimination*: accuracy/AUC and per-S-code F1 on off-template
+   public guard evaluations (candidates: ToxicChat, OpenAI moderation eval,
+   XSTest, WildGuard-class sets — subject to taxonomy mapping, §8), pre vs
+   post at each selected dose.
+2. *False-positive arm*: benign-but-provocative prompts (XSTest-style) —
+   over-flagging under induction doses, under-flagging under suppression.
+3. *Calibration*: margin reliability curves / ECE pre vs post —
+   decalibration without accuracy loss is an invisible failure mode for
+   deployments that threshold on confidence.
+4. *Attribution integrity*: on cases still flagged unsafe post-op, S-code
+   agreement with pre-op (category scramble detection).
+5. *Cross-lingual transfer*: Llama Guard 3 is multilingual — does an
+   English-fit direction move verdicts in other languages? Separates
+   semantic-level from surface-level intervention in one cheap probe.
+6. *Template robustness*: paraphrased guard templates — does the effect
+   survive off the exact training scaffold (directly probes the
+   fixed-template threat)?
+7. *Mirror lane only*: verdict-distribution KL (label + category tokens)
+   in place of full-vocab KL — full-vocab KL on a guard mostly measures
+   template plumbing; the behavioral fingerprint is the verdict
+   distribution. GGUF/llama.cpp A/B lane unchanged from the bench.
+
+*Exit gate*: pre/post battery table joined to the winner-arm records; any
+arm advancing to writeup carries its battery row.
+
 *Beyond the near term*: with guard category cones established as pure
 detection geometry, comparing them against a chat model's refusal cones (via
 `analysis/cross_model_transfer.py`) would decompose chat refusal into a
 detection component (shared with the guard) and an enforcement residual —
 the geometric form of the theory journal's §2.4 decomposition. Recorded as an
-arc, not a phase.
+arc, not a phase. Running the P10 battery on the nominal subject alongside
+the guard gives H8's "task vs veneer" comparison behavioral teeth.
 
 ## 7. Deliverable figures
 
@@ -659,6 +705,8 @@ the eventual writeup.
 9. Margin vs parameters-removed trajectory, capacity-ordered vs random-order,
    knee marked (H8); optional second panel: chat-refusal comparator
    ("task vs veneer").
+10. Post-op interrogation panel (P10): pre/post ROC + reliability curves,
+    with false-positive and attribution-integrity insets, per winner arm.
 
 Narrative arc for human consumption: *a safety classifier's verdict is not a
 gate bolted onto a capability core but a task-defining structure; here is its
@@ -689,6 +737,12 @@ without fooling itself.*
   interpreted without its depth profile.
 - **Selection gates**: `min_parse_rate: 1.0` is strict; arms that degrade
   formatting die silently. Report gate attrition alongside winners.
+- **Battery taxonomy mapping**: public guard evaluations label with differing
+  schemes; mapping onto the S-code taxonomy is itself a design decision with
+  slack. Fix the mapping (and which sets support per-category vs
+  binary-only scoring) before P10 runs, and report binary and per-category
+  results separately. Dataset names in P10 are candidates pending
+  availability/licensing checks, not commitments.
 - **Geometry shopping**: manifolds are analysis representations, not causal
   surfaces — the model's readout is linear, so interventions stay in the
   residual stream's own coordinates regardless of which geometry describes
