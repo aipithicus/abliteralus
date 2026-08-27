@@ -45,13 +45,13 @@ runner-minutes each under normal conditions.
 Run the same probes locally with:
 
 ```bash
-uv sync --locked --extra dev
-uv run --extra dev python scripts/run_conditional_gate.py model-download-runtime
-uv run --extra dev python scripts/run_conditional_gate.py external-evaluation
-uv run --extra dev python scripts/run_conditional_gate.py network-services
+python -I -B deps/uv/run_uv.py sync --locked --extra dev
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/run_conditional_gate.py model-download-runtime
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/run_conditional_gate.py external-evaluation
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/run_conditional_gate.py network-services
 
-uv sync --locked --all-extras
-uv run --all-extras python scripts/run_conditional_gate.py operator-ui
+python -I -B deps/uv/run_uv.py sync --locked --all-extras
+python -I -B deps/uv/run_uv.py run --all-extras python scripts/run_conditional_gate.py operator-ui
 ```
 
 ## CUDA and bitsandbytes
@@ -70,14 +70,14 @@ probes.
 For an operator run on the labeled machine:
 
 ```bash
-uv sync --locked --extra dev --extra quantization
+python -I -B deps/uv/run_uv.py sync --locked --extra dev --extra quantization
 CUDA_TORCH_VERSION="$(.venv/bin/python -c \
   'import torch; print(torch.__version__.split("+", 1)[0])')"
-UV_TORCH_BACKEND=cu130 uv pip install --python .venv/bin/python \
+python -I -B deps/uv/run_uv.py pip install --torch-backend cu130 --python .venv/bin/python \
   --reinstall-package torch "torch==$CUDA_TORCH_VERSION"
-uv pip check --python .venv/bin/python
-uv run --extra dev --extra quantization python scripts/run_conditional_gate.py cuda-runtime
-uv run --extra dev --extra quantization python scripts/run_conditional_gate.py bitsandbytes-runtime
+python -I -B deps/uv/run_uv.py pip check --python .venv/bin/python
+python -I -B deps/uv/run_uv.py run --extra dev --extra quantization python scripts/run_conditional_gate.py cuda-runtime
+python -I -B deps/uv/run_uv.py run --extra dev --extra quantization python scripts/run_conditional_gate.py bitsandbytes-runtime
 ```
 
 Jetson CUDA support is tracked separately from this generic x64 CUDA lane. The
@@ -107,11 +107,11 @@ If the repository has no attached Apple runner, collect equivalent operator evid
 on Apple Silicon and attach the JSON and JUnit files to the tracking issue:
 
 ```bash
-uv sync --locked --extra dev
-uv run --extra dev python scripts/run_conditional_gate.py mps-runtime
+python -I -B deps/uv/run_uv.py sync --locked --extra dev
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/run_conditional_gate.py mps-runtime
 
-uv sync --locked --extra dev --group mlx
-uv run --extra dev --group mlx python scripts/run_conditional_gate.py mlx-runtime
+python -I -B deps/uv/run_uv.py sync --locked --extra dev --group mlx
+python -I -B deps/uv/run_uv.py run --extra dev --group mlx python scripts/run_conditional_gate.py mlx-runtime
 ```
 
 ## Remote provider

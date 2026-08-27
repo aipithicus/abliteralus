@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "tool": "uv",
+  "version": "0.12.4",
+  "release_url": "https://github.com/astral-sh/uv/releases/tag/0.12.4",
+  "cache_path": ".scratch/cache/uv",
+  "platforms": {
+    "windows-x86_64": {
+      "archive_url": "https://github.com/astral-sh/uv/releases/download/0.12.4/uv-x86_64-pc-windows-msvc.zip",
+      "archive_sha256": "4f3b7d63cd81fca0da5a655d973d20affca89ce6e5f9a29fd0183cc4204a7639",
+      "archive_size": 20301023,
+      "primary": "deps/uv/uv.exe",
+      "files": [
+        {
+          "archive_path": "uv.exe",
+          "install_path": "deps/uv/uv.exe",
+          "sha256": "325c5cf7cef9073bda048a2207ae0f92a1ad32c10b65a18236b6e3ac8cd19cb3",
+          "size": 51020288,
+          "executable": true
+        },
+        {
+          "archive_path": "uvw.exe",
+          "install_path": "deps/uv/uvw.exe",
+          "sha256": "be5d26f7b15a2e43bac1d66a3f500d5a5ea56e84c09810969843f5ba47acb2bf",
+          "size": 329728,
+          "executable": true
+        },
+        {
+          "archive_path": "uvx.exe",
+          "install_path": "deps/uv/uvx.exe",
+          "sha256": "764194cbdb43d3a8181027af85df51a68477ba1a6f45a9f04317d3f8dc67c418",
+          "size": 329728,
+          "executable": true
+        }
+      ]
+    },
+    "linux-x86_64-gnu": {
+      "archive_url": "https://github.com/astral-sh/uv/releases/download/0.12.4/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "archive_sha256": "c8c60f47e6f88d18dbf6f33d7279fb1fbf7ae76631768152cf5578c3d65729b4",
+      "archive_size": 22913818,
+      "primary": "deps/uv/uv",
+      "files": [
+        {
+          "archive_path": "uv-x86_64-unknown-linux-gnu/uv",
+          "install_path": "deps/uv/uv",
+          "sha256": "47884be1ceaf3e73c6b6e5abed5cba5eba55109505b796c459503a48b70ba49d",
+          "size": 58949608,
+          "executable": true
+        },
+        {
+          "archive_path": "uv-x86_64-unknown-linux-gnu/uvx",
+          "install_path": "deps/uv/uvx",
+          "sha256": "f0c47dc0646b5d0bb0b1528ff9e98e43264c61967c37f5fa93e07949d178c85a",
+          "size": 346224,
+          "executable": true
+        }
+      ]
+    }
+  }
+}

@@ -19,17 +19,23 @@ the guide in the same pull request when intentionally changing a standard.
 
 ## Development setup
 
-The supported Python versions are 3.10 through 3.12. Use the committed lock so
-local resolution matches CI and Linux/Windows use the official CPU-only PyTorch
-source by default:
+The supported Python versions are 3.10 through 3.12. The repository owns its uv
+version, release URLs, archive digests, executable digests, and install paths in
+[`deps/uv/pin.json`](deps/uv/pin.json). Restore that exact tool once; do not install
+or discover uv through `PATH`.
 
 ```bash
-python -m pip install "uv==0.12.4"
-uv sync --locked --extra dev
+python -I -B deps/uv/restore_uv.py
+python -I -B deps/uv/run_uv.py sync --locked --extra dev
 ```
 
-Run project commands in the environment with `uv run --extra dev ...`, or activate
-`.venv`. Never update `uv.lock` merely to make setup succeed. Dependency updates
+On Windows, `pwsh -NoProfile -File deps/uv/restore-uv.ps1` uses only the repository's
+portable Python under `deps/python`, then deploys `deps/uv/uv.exe`.
+Run normal commands through `pwsh -NoProfile -File deps/uv/run-uv.ps1`, which verifies
+the executable and confines Python selection, caches, and temporary state to the
+repository. The runner redirects user/system uv configuration roots into `.scratch`,
+retains project configuration discovery, and rejects ambient uv/Python configuration
+overrides. Never update `uv.lock` merely to make setup succeed. Dependency updates
 must be deliberate and follow [`docs/SUPPLY_CHAIN_POLICY.md`](docs/SUPPLY_CHAIN_POLICY.md).
 
 ## Change workflow
@@ -130,8 +136,8 @@ Update [`ci/test-risk-map.json`](ci/test-risk-map.json) whenever source ownershi
 contract coverage, or the conditional boundary changes. Validate it with:
 
 ```bash
-uv run --extra dev python scripts/check_test_risk_map.py
-uv run --extra dev python scripts/check_conditional_policy.py
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/check_test_risk_map.py
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/check_conditional_policy.py
 ```
 
 ## Local validation
@@ -140,26 +146,27 @@ Run the focused pull-request baseline while developing. Replace `origin/main` wi
 the exact base commit when needed:
 
 ```bash
-uv lock --check
-uv run --extra dev python -m ruff check --select F app.py abliteralus tests scripts
+python -I -B deps/uv/run_uv.py lock --check
+python -I -B deps/uv/run_uv.py run --extra dev python -m ruff check --select F app.py abliteralus tests scripts
 mkdir -p test-results
-uv run --extra dev python scripts/select_pr_tests.py --base-ref origin/main \
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/select_pr_tests.py --base-ref origin/main \
   > test-results/selected-tests.txt
 mapfile -t selected_tests < test-results/selected-tests.txt
-uv run --extra dev python -m pytest "${selected_tests[@]}" \
+python -I -B deps/uv/run_uv.py run --extra dev python -m pytest "${selected_tests[@]}" \
   --cov=app --cov-branch --cov-fail-under=0 \
   --cov-report=json:test-results/coverage-pr-core.json
-uv run --extra dev python scripts/check_coverage_thresholds.py \
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/check_coverage_thresholds.py \
   test-results/coverage-pr-core.json --min-line 0 --min-branch 0 \
   --min-changed 50 --base-ref origin/main
-uv run --extra dev python -c 'import abliteralus; print(abliteralus.__version__)'
-uv run --extra dev python -m abliteralus --help
-uv run --extra dev python scripts/check_conditional_policy.py
-uv run --extra dev python scripts/check_test_risk_map.py
+python -I -B deps/uv/run_uv.py run --extra dev python -c 'import abliteralus; print(abliteralus.__version__)'
+python -I -B deps/uv/run_uv.py run --extra dev python -m abliteralus --help
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/check_conditional_policy.py
+python -I -B deps/uv/run_uv.py run --extra dev python scripts/check_test_risk_map.py
 ```
 
 If package inputs changed, also run
-`uv run --extra dev python -m build --sdist --wheel`. Maintainers run the complete
+`python -I -B deps/uv/run_uv.py run --extra dev python -m build --sdist --wheel`.
+Maintainers run the complete
 `python -m pytest`, package-install,
 cross-version, and quality-depth suite before a tagged release.
 
@@ -169,18 +176,18 @@ the configured 100-character line length. The exact reporting command lives in C
 For changes to the quality system or mutation-owned code, also run:
 
 ```bash
-uv sync --locked --extra dev --group quality
-uv run --extra dev --group quality python scripts/run_repeat_gate.py \
+python -I -B deps/uv/run_uv.py sync --locked --extra dev --group quality
+python -I -B deps/uv/run_uv.py run --extra dev --group quality python scripts/run_repeat_gate.py \
   --output test-results/repeat-gate.json
-uv run --extra dev --group quality python scripts/check_mutation_targets.py prepare
-uv run --extra dev --group quality python scripts/prepare_mutation_coverage.py \
+python -I -B deps/uv/run_uv.py run --extra dev --group quality python scripts/check_mutation_targets.py prepare
+python -I -B deps/uv/run_uv.py run --extra dev --group quality python scripts/prepare_mutation_coverage.py \
   prepare-coverage --max-children 4
-uv run --extra dev --group quality python scripts/prepare_mutation_coverage.py \
+python -I -B deps/uv/run_uv.py run --extra dev --group quality python scripts/prepare_mutation_coverage.py \
   prepare-stats --max-children 4
-uv run --extra dev --group quality python scripts/run_prepared_mutmut.py \
+python -I -B deps/uv/run_uv.py run --extra dev --group quality python scripts/run_prepared_mutmut.py \
   run --max-children 4
-uv run --extra dev --group quality mutmut export-cicd-stats
-uv run --extra dev --group quality python scripts/check_mutation_score.py \
+python -I -B deps/uv/run_uv.py run --extra dev --group quality mutmut export-cicd-stats
+python -I -B deps/uv/run_uv.py run --extra dev --group quality python scripts/check_mutation_score.py \
   mutants/mutmut-cicd-stats.json --minimum 85
 ```
 
@@ -199,10 +206,10 @@ the full baseline:
 | Abliteration core | `abliteralus/abliterate.py`, `abliteralus/strategies/**` | `python -m pytest tests/test_abliterate.py` |
 | Research metrics | `abliteralus/evaluation/**`, `abliteralus/analysis/**`, `paper/**`, `community_results/**` | `python -m pytest tests/test_advanced_metrics.py tests/test_breakthrough_modules.py tests/test_community.py` |
 | User contracts | `abliteralus/cli.py`, `abliteralus/local_ui.py`, `app.py`, `notebooks/**` | `python -m pytest tests/test_cli.py tests/test_module_imports.py` and CLI help |
-| CI and supply chain | `.github/workflows/**`, `ci/**`, dependency and policy files | `uv lock --check`, policy tests, and package build |
+| CI and supply chain | `.github/workflows/**`, `ci/**`, dependency and policy files | `python -I -B deps/uv/run_uv.py lock --check`, policy tests, and package build |
 
-Use `uv run --extra dev` before the Python commands shown in the table when running
-them in the managed environment.
+Use `python -I -B deps/uv/run_uv.py run --extra dev` before the Python commands shown in the table
+when running them in the managed environment.
 
 ## Conditional and hardware testing
 
@@ -243,7 +250,8 @@ attach a contributor-controlled runner to untrusted pull-request execution.
   datasets, tools, actions, or services.
 - Do not broaden workflow permissions, execute untrusted pull-request code with
   credentials, or replace immutable action/tool pins with mutable tags.
-- Changes to actions or standalone tools must update [`ci/digests.txt`](ci/digests.txt).
+- Changes to the repository uv tool must update [`deps/uv/pin.json`](deps/uv/pin.json),
+  including release, archive, and installed-file digests for every supported platform.
 - Changes to dependencies must include the reviewed `uv.lock` and relevant license,
   vulnerability, and SBOM effects.
 

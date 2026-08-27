@@ -5,9 +5,14 @@ Python 3.10–3.12 test matrix. CI installs CPU-only PyTorch from PyTorch's
 explicit package index and resolves every other package from PyPI. The lock
 contains exact versions, source URLs, environment markers, and artifact hashes.
 
-CI uses exact Python tool versions and checksum-pinned standalone binaries.
-`ci/digests.txt` records executable and GitHub Action pins; build, test, and
-license-tool transitive dependencies are covered by `uv.lock`.
+The repository-owned uv toolchain is declared in `deps/uv/pin.json`. That manifest
+records the exact release, platform archives, archive sizes and SHA-256 digests,
+installed-file paths, sizes, and SHA-256 digests. Runtime code resolves only those
+paths and does not search `PATH`. Build, test, and license-tool transitive
+dependencies remain covered by `uv.lock`. The repository runner also isolates
+configuration discovery from machine-level uv files by redirecting its user/system
+roots into `.scratch`, while retaining project configuration and removing ambient
+uv/Python configuration variables before invoking the pinned executable.
 
 ## Digest-bound release evidence
 
@@ -78,14 +83,16 @@ unconditional success conversion are forbidden.
 
 ## Updating the lock and tools
 
-Use the version of uv recorded in `ci/digests.txt`:
+Restore and use the uv release recorded in `deps/uv/pin.json`. On Windows:
 
-```bash
-uvx --from uv==0.12.4 uv lock --upgrade
-uvx --from uv==0.12.4 uv lock --check
+```powershell
+pwsh -NoProfile -File deps/uv/restore-uv.ps1
+pwsh -NoProfile -File deps/uv/run-uv.ps1 lock --upgrade
+pwsh -NoProfile -File deps/uv/run-uv.ps1 lock --check
 ```
 
 Review the complete lock diff, source indexes, new licenses, vulnerability
-evidence, and SBOM diff. Update direct pins in `pyproject.toml` and executable
-pins/checksums in `ci/digests.txt` in the same pull request. A normal dependency
-or tool update must not add an exception merely to make CI green.
+evidence, and SBOM diff. Update direct pins in `pyproject.toml` when appropriate.
+A uv tool update must update every supported platform entry and digest in
+`deps/uv/pin.json` in the same pull request. A normal dependency or tool update
+must not add an exception merely to make CI green.

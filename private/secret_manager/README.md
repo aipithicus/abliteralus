@@ -69,9 +69,11 @@ the resolved value.
 
 From the ABLITERALUS repository root:
 
-```text
-uv tool install --editable ./private/secret_manager
+```powershell
+pwsh -NoProfile -File deps/uv/run-uv.ps1 tool install --editable ./private/secret_manager
 ```
 
 Re-run that command after changing the editable tool configuration. The generated
-absolute `secret-broker.exe` path can then be used by OBLITERATUS on Windows.
+project-local `.scratch/bin/secret-broker.exe` path can then be used by OBLITERATUS
+on Windows. The tool environment, executable, cache, and temporary state remain under
+this repository's ignored `.scratch` tree.

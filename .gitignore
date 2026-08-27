@@ -12,6 +12,15 @@ build/
 venv/
 env/
 deps/**
+!deps/uv/
+deps/uv/**
+!deps/uv/README.md
+!deps/uv/pin.json
+!deps/uv/restore-uv.ps1
+!deps/uv/restore_uv.py
+!deps/uv/run-uv.ps1
+!deps/uv/run_uv.py
+!deps/uv/resolve-repository-python.ps1
 **/.scratch
 .env
 .env.*
