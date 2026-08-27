@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "abliteralus-guard-study"
+version = "0.1.0"
+description = "Reversible directional studies for generative guard models"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "Aipithicus Enterprises" }]
+dependencies = [
+  "abliteralus",
+  "pyyaml>=6.0",
+  "safetensors>=0.4",
+  "torch>=2.0",
+]
+
+[project.scripts]
+guard-study = "guard_study.cli:main"
+
+[tool.uv.sources]
+abliteralus = { path = "../..", editable = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]

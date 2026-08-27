@@ -3,8 +3,12 @@ members = [
   "secret_manager",
   "surgery_artifacts",
   "research_journal",
+  "guard_study",
   "lab_bench",
 ]
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra", "-p", "no:cacheprovider"]
@@ -13,6 +17,7 @@ pythonpath = [
   "surgery_artifacts/src",
   "research_journal/src",
   "lab_bench/src",
+  "guard_study/src",
   "..",
 ]
 testpaths = [
@@ -20,6 +25,7 @@ testpaths = [
   "surgery_artifacts/tests",
   "research_journal/tests",
   "lab_bench/tests",
+  "guard_study/tests",
 ]
 
 [tool.ruff]
