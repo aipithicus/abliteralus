@@ -246,6 +246,37 @@ Residual-stream norms carry information; raw cosine can mislead when norms are
 semantic. All alignment diagnostics report whitened-metric cosine alongside
 raw cosine, and margin-weighted variants where a scalar summary is needed.
 
+### 4.8 Riemannian Gaussian mixtures on hyperbolic space (arXiv:2604.24895)
+
+All computation in the **hyperboloid (Lorentz) model** `H^d` — closed-form
+distance `arcosh(−⟨x,y⟩_L)`, exp/log maps, tangent projection — with the
+Poincaré ball reserved for visualization (isometric; projection formulas
+provided). Isotropic Riemannian Gaussians `∝ exp(−d(x,μ)²/2σ²)` with an exact
+erfc finite-sum normalizing constant; weighted MLE splits into a weighted
+Fréchet mean (unique — `H^d` is Hadamard, so the location problem is *strongly
+geodesically convex globally*, unlike on the sphere or Grassmannian) plus a
+one-dimensional strictly convex scale profile; exact and generalized
+(majorization–minimization) EM for mixtures with monotonicity guarantees.
+
+**Role**: the clustering/model-selection instrument for the hierarchy arm
+(H7), applied to hyperbolically embedded direction sets. Note the negative
+curvature *simplifies* the statistics relative to our spherical and Grassmann
+instruments — global uniqueness where the compact manifolds give only local.
+
+### 4.9 Anisotropic hyperbolic wrapped normal inference (arXiv:2605.00363)
+
+`HWN(μ, Σ)`: push a Euclidean `N(0, Σ)` through parallel transport and the
+exponential map; the density is the tangent-space Gaussian times the
+volume-growth correction `(r/sinh r)^(d−1)`. Shell-constrained profile MLE
+(eigenvalues of Σ clipped into `[λ₋, λ₊]` — the same spectral-regularization
+discipline as our whitening extractor), with asymptotic normality and
+efficient profile (Wald) inference for the location through the
+Schur-complement information.
+
+**Role**: proper confidence statements for hyperbolic locations in the
+hierarchy arm, and full-covariance (anisotropic) fits where 4.8's isotropic
+model is too rigid.
+
 ## 5. Hypotheses
 
 Each hypothesis states its measurand, prediction, and falsifier. Both outcomes
@@ -307,6 +338,26 @@ flip; significance only at the grid extremes (±2σ).
 destruction, and every potency number in H2–H5 must be reinterpreted with a
 collateral-damage covariate.
 
+**H7 — Verdict hierarchy (conditional on H1: K > 1).** The category detectors
+are not flat siblings: the direction set is tree-like — a shared "unsafe"
+parent with S-code children — and is therefore better represented in
+hyperbolic than in spherical or Euclidean geometry, with the radial coordinate
+carrying generality/confidence (the information cosine discards, per §4.7).
+*Measurand*: (a) scaled Gromov δ-hyperbolicity of the whitened geodesic
+distance matrix over per-category and per-resample directions; (b) embedding
+distortion into `H^r` vs `S^r` vs `ℝ^r` at matched dimension r; (c) mixture
+fits in `H^r` via §4.8 with §4.9 confidence statements; (d) radial ordering of
+embedded case activations by margin magnitude.
+*Prediction*: δ small relative to diameter; hyperbolic distortion strictly
+lowest; shared-axis direction embeds radially inward of the category
+directions.
+*Falsifier*: no hyperbolic distortion advantage — the taxonomy is flat, the
+spherical mixture description (H1) is complete, and the hierarchy framing is
+dropped from the writeup.
+*Discipline*: geometries are compared by δ and distortion, never by
+likelihood across manifolds (different sample spaces); the norm→radius map is
+fixed before fitting (see §8).
+
 ## 6. Experimental trajectory
 
 Phases are ordered so that every method arm consumes the same frozen inputs
@@ -354,6 +405,13 @@ profiles of causal effect vs readout alignment.
 arm × dose; k-sample energy tests vs sham.
 *Exit gate*: **H6 resolved**; collateral covariate joined to the ED50 table.
 
+**P8 — Hierarchy arm (conditional: opens only if P5 finds K > 1).** Gromov δ
+and matched-dimension distortion comparison on the P5 direction set;
+hyperboloid-model embedding with a pre-registered norm→radius map; Riemannian
+Gaussian mixture fits (§4.8) with profile-likelihood inference (§4.9);
+Poincaré-disk projection for the figure only.
+*Exit gate*: **H7 resolved**; δ/distortion table + verdict-map figure.
+
 Retrospective analyses of P0 pilot data (notably H2) may be reported as soon
 as available; they do not wait for the phase ladder.
 
@@ -370,6 +428,9 @@ the eventual writeup.
 5. Spectrum + mixture-BIC panel (H1).
 6. Depth profiles: causal effect vs readout alignment (H4).
 7. Landscape energy distance vs dose, with permutation bands (H6).
+8. Verdict map on the Poincaré disk: category directions and case activations,
+   radius = generality/confidence, with δ/distortion table inset (H7;
+   conditional).
 
 Narrative arc for human consumption: *a safety classifier's verdict is not a
 gate bolted onto a capability core but a task-defining structure; here is its
@@ -396,6 +457,13 @@ without fooling itself.*
   interpreted without its depth profile.
 - **Selection gates**: `min_parse_rate: 1.0` is strict; arms that degrade
   formatting die silently. Report gate attrition alongside winners.
+- **Geometry shopping**: manifolds are analysis representations, not causal
+  surfaces — the model's readout is linear, so interventions stay in the
+  residual stream's own coordinates regardless of which geometry describes
+  the direction set best. Cross-geometry claims use δ-hyperbolicity and
+  distortion at matched dimension, never likelihoods across different sample
+  spaces; and the norm→radius embedding map for H7 is a researcher degree of
+  freedom that must be fixed (and recorded) before any hyperbolic fit runs.
 
 ## 9. Assets
 
@@ -411,5 +479,7 @@ without fooling itself.*
 Corpus papers on the critical path: 2112.02580 (mxPBF), 2307.15213
 (centering), 2605.20681 (scale-calibrated MoM), 2505.18844 (product medians),
 2106.06375 (SN mixtures), 2208.12435 (landscapes + energy tests), 2504.16318
-(cosine hygiene). Reserve: 2209.03318 / 2603.14815 / 2509.11435 (Wasserstein
-family), 2601.10992 (metric scaling), 2605.08001 (median scale selection).
+(cosine hygiene). Conditional path (H7/P8): 2604.24895 (hyperbolic Riemannian
+Gaussian mixtures), 2605.00363 (anisotropic HWN inference). Reserve:
+2209.03318 / 2603.14815 / 2509.11435 (Wasserstein family), 2601.10992 (metric
+scaling), 2605.08001 (median scale selection).
