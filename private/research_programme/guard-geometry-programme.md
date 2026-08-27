@@ -37,6 +37,16 @@ that organization as causally potent, statistically stable structure?** Every
 hypothesis below is an aspect of this question with a scalar or figure as its
 answer.
 
+**Upstream continuity.** This is the guard-side instantiation of the
+OBLITERATUS concept-cone agenda ([docs/theory_journal.md](../../docs/theory_journal.md)
+§2.3): chat-side refusal is a *polyhedral concept cone* — per-category
+directions sharing a common half-space (Wollschläger et al., ICML 2025) — but
+chat preps suffer fuzzy category attribution and conflate content *detection*
+with refusal *enforcement* (§2.4 there). The guard has machine-verified
+S-code labels and no enforcement pathway: its category cones are pure
+detection geometry. Cone-structure results established here (half-space
+tests, generator estimation, DSI calibration) flow back upstream.
+
 ## 2. Conceptual vocabulary
 
 Terms used throughout, fixed here so results are communicable without the
@@ -100,8 +110,17 @@ computation); those diagnostics are load-bearing for H3/H5.
 difference-in-means. Every method arm is judged against it.
 
 **Category structure** — [abliteralus/analysis/concept_geometry.py](../../abliteralus/analysis/concept_geometry.py)
-(`CategoryDirection`, concept cones) anticipates the per-S-code decomposition
-that H1 makes quantitative.
+(`ConceptConeAnalyzer`) already implements the polyhedral-cone machinery from
+the upstream agenda: per-category directions, the Direction Specificity Index
+(`DSI = 1 − mean|cos(d_cat, d_other)|`), a linear-vs-polyhedral classifier
+(currently the heuristic `mean_cos < 0.8 or cone_dim > 2`), and
+most-polyhedral-layer selection. H1/P5 reuses this and upgrades its two soft
+spots: the classifier threshold gets calibrated against ground-truth S-code
+labels, and the theory journal's flagged gap — *"SVD components are not
+aligned with cone generators"* — is answered by the SN-mixture components
+(§4.5), which estimate the cone's extreme-ray clusters directly. The theory
+journal's bootstrap-cosine stability recommendation (§2.5 there) is likewise
+the primitive ancestor of H5's Grassmann stability scorecard.
 
 **Comparators from the erasure family** —
 [abliteralus/analysis/leace.py](../../abliteralus/analysis/leace.py) (closed-form
@@ -345,16 +364,27 @@ interrogated directly — the programme's premise.
 Each hypothesis states its measurand, prediction, and falsifier. Both outcomes
 are interpretable; none is decorative.
 
-**H1 — Verdict rank.** The verdict is not rank-1: per-S-code whitened
-difference directions span a subspace with effective rank > 1, organized as
-category detectors plus a shared axis.
+**H1 — Verdict rank and cone structure.** The verdict is not rank-1: per-S-code
+whitened difference directions span a subspace with effective rank > 1,
+organized as a **polyhedral cone** — category detectors sharing a common
+half-space around a shared axis — mirroring the upstream chat-refusal finding
+in a prep with ground-truth labels. (The structure ladder: subspace rank
+here → half-space cone here → hierarchy depth in H7.)
 *Measurand*: singular spectrum of the stacked per-category directions
-(certified via `spectral_certification`); SN-mixture BIC curve over K.
-*Prediction*: BIC prefers K ≥ 2; leading singular value < ~75% of energy.
+(certified via `spectral_certification`); SN-mixture BIC curve over K;
+per-S-code DSI; the half-space test (existence of an axis with strictly
+positive cosine to every category direction — candidate axes: shared top
+singular vector, label axis).
+*Prediction*: BIC prefers K ≥ 2; leading singular value < ~75% of energy;
+half-space test passes (cone, not a mere subspace); mixture components
+recover generator clusters that SVD components miss.
 *Falsifier*: K = 1 preferred and a single dominant singular value — the guard
 verdict is chat-refusal-like after all, and rank-k arms (P6) should then show
 no potency advantage; the programme pivots to asking why the *pilot*
-interventions diverged.
+interventions diverged. A separate partial outcome: rank > 1 but the
+half-space test fails — category detectors are genuinely antagonistic rather
+than cone-structured, which would itself contradict the upstream polyhedral
+picture and be worth reporting loudly.
 
 **H2 — Dose asymmetry.** Inducing "unsafe" is easier than suppressing it:
 ED50(+) < ED50(−) on matched cases.
@@ -477,17 +507,23 @@ set for P3 chosen from them (with the causal map), not by convention.
 
 **P3 — Estimator arms.** Centering variants (4.2 taxonomy), whitened-SVD
 (existing extractor behind the protocol), MoM-robust (block medians over
-prompt blocks). Full dose grids with matched shams.
+prompt blocks). Full dose grids with matched shams. Reserve arm: RDO-style
+gradient search (the theory journal's §2.3 recommendation) — directly
+optimize the direction against the differentiable logit margin; the guard
+makes this cleaner than any chat prep (no behavioral judge in the loop).
+Expected role: the potency ceiling that the H5 scorecard tests for stability.
 *Exit gate*: ED50 table (arm × sign) with bootstrap CIs → **H2, H3 resolved.**
 
 **P4 — Stability scorecard.** B ≈ 200 bootstrap resamples per estimator;
 Grassmann dispersion about the α̂-calibrated MoM center (4.3–4.4).
 *Exit gate*: potency × stability Pareto figure → **H5 resolved.**
 
-**P5 — Rank instrument.** Per-S-code directions (categories passing the P2
-gate); sign canonicalization; singular spectrum + SN-mixture BIC scan.
-*Exit gate*: verdict-rank estimate with certification level → **H1 resolved**;
-decision point: K > 1 authorizes P6's rank-k arms.
+**P5 — Rank and cone instrument.** Per-S-code directions (categories passing
+the P2 gate); sign canonicalization; singular spectrum + SN-mixture BIC scan;
+DSI per category and the half-space test via `ConceptConeAnalyzer`, with its
+polyhedral threshold calibrated against the S-code ground truth.
+*Exit gate*: verdict-rank + cone-structure estimate with certification level
+→ **H1 resolved**; decision point: K > 1 authorizes P6's rank-k arms.
 
 **P6 — Subspace arms and depth profiles.** Rank-k projection and steering
 arms; cross-layer joint arm as product-manifold Weiszfeld median; depth
@@ -516,6 +552,13 @@ interface, not a gate.
 
 Retrospective analyses of P0 pilot data (notably H2) may be reported as soon
 as available; they do not wait for the phase ladder.
+
+*Beyond the near term*: with guard category cones established as pure
+detection geometry, comparing them against a chat model's refusal cones (via
+`analysis/cross_model_transfer.py`) would decompose chat refusal into a
+detection component (shared with the guard) and an enforcement residual —
+the geometric form of the theory journal's §2.4 decomposition. Recorded as an
+arc, not a phase.
 
 ## 7. Deliverable figures
 
@@ -591,6 +634,7 @@ without fooling itself.*
 | You corpus (markdown, mdnav-indexed) | `D:\aghado01\graveyard\codex-scientiae\bibliotecha\corpora\KisungYou` |
 | Author implementation clones (R) | `D:\aghado01\codex-scientiae\ingestion\gauntlet\kisungyou` |
 | Prior art (own) | `D:\aghado01\ThermoMapper` |
+| Upstream cone theory + open gaps | [docs/theory_journal.md](../../docs/theory_journal.md) (§2.3–2.5, Part VI) |
 
 Corpus papers on the critical path: 2112.02580 (mxPBF), 2307.15213
 (centering), 2605.20681 (scale-calibrated MoM), 2505.18844 (product medians),
