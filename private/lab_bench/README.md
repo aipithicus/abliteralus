@@ -72,6 +72,52 @@ Hugging Face and uv caches are intentionally shared at `.scratch/cache/huggingfa
 and `.scratch/cache/uv`; they are caches rather than run evidence and are not part
 of stale-run cleanup.
 
+## Storage creep and reclamation
+
+The storage census partitions the repository so growth is visible without treating
+all large data as garbage. Sizes are logical file bytes; links and Windows reparse
+points are reported but never followed. An ordinary report is read-only:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml storage report
+lab-bench --config private/lab_bench/lab.local.toml storage report --json
+```
+
+Use `--record` at the cadence you want to measure. Each aggregate-only snapshot is
+an immutable JSON file under `.scratch/storage/snapshots`; it contains category
+sizes, counts, timestamps, and bounded scan diagnostics, but no commands,
+environments, prompts, or secrets.
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml storage report --record
+lab-bench --config private/lab_bench/lab.local.toml storage history --limit 12
+```
+
+Reclamation requires one or more explicit categories and is always preview-first.
+The age test uses the newest observed modification anywhere in a selected path.
+Hugging Face and uv caches are reclaimed only as whole cache roots, which avoids
+leaving an internally inconsistent partial cache. Cache application is refused
+while a managed run is active.
+
+```text
+# Routine lightweight cleanup preview, then application.
+lab-bench --config private/lab_bench/lab.local.toml storage clean --category runs --category tool-state --older-than-days 7
+lab-bench --config private/lab_bench/lab.local.toml storage clean --category runs --category tool-state --older-than-days 7 --apply
+
+# More conservative whole-cache reclamation.
+lab-bench --config private/lab_bench/lab.local.toml storage clean --category huggingface-cache --category uv-cache --older-than-days 30
+lab-bench --config private/lab_bench/lab.local.toml storage clean --category huggingface-cache --category uv-cache --older-than-days 30 --apply
+```
+
+`outputs/`, the artifact registry, `.venv`, `deps`, Git data, unclassified scratch
+state, and repository source are report-only and cannot be passed as reclaim
+categories. A path with scan errors is shown as `INCOMPLETE` and is omitted from
+reclamation rather than guessed at. Caches selected through externally overridden
+`HF_HOME` or `UV_CACHE_DIR` paths outside this repository are intentionally outside
+the census and cleanup authority. The `uv-cache` category also accounts for the
+older workspace path `.scratch/uv-cache`, allowing it to age out safely after the
+canonical `.scratch/cache/uv` path takes over.
+
 ## Local surgery and inference
 
 ```text

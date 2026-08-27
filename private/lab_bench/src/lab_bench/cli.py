@@ -7,6 +7,7 @@ import json
 import sys
 from collections.abc import Sequence
 
+from abliteralus.storage import RECLAIMABLE_CATEGORIES
 from secret_manager.errors import SecretManagerError
 from surgery_artifacts.errors import ArtifactError
 
@@ -99,6 +100,25 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="delete the displayed stale workspaces; omission is a dry run",
     )
+
+    storage = commands.add_parser("storage", help="measure storage creep and reclaim safe state")
+    storage_commands = storage.add_subparsers(dest="storage_operation", required=True)
+    storage_report = storage_commands.add_parser("report")
+    storage_report.add_argument("--record", action="store_true")
+    storage_report.add_argument("--json", action="store_true")
+    storage_history = storage_commands.add_parser("history")
+    storage_history.add_argument("--limit", type=_positive_integer, default=20)
+    storage_history.add_argument("--json", action="store_true")
+    storage_clean = storage_commands.add_parser("clean")
+    storage_clean.add_argument(
+        "--category",
+        action="append",
+        choices=sorted(RECLAIMABLE_CATEGORIES),
+        required=True,
+    )
+    storage_clean.add_argument("--older-than-days", type=_positive_float, default=7.0)
+    storage_clean.add_argument("--apply", action="store_true")
+    storage_clean.add_argument("--json", action="store_true")
 
     with_secrets = commands.add_parser(
         "with-secrets", help="run any local command with a named non-privileged profile"
@@ -205,6 +225,71 @@ def _print_inventory(payload: dict) -> None:
     print(f"artifact registry: {payload['artifacts']['registry']}")
 
 
+def _format_bytes(value: int, *, signed: bool = False) -> str:
+    sign = ""
+    amount = float(value)
+    if value < 0:
+        sign = "-"
+        amount = -amount
+    elif signed and value > 0:
+        sign = "+"
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if amount < 1024 or candidate == units[-1]:
+            break
+        amount /= 1024
+    precision = 0 if unit == "B" else 1
+    return f"{sign}{amount:.{precision}f} {unit}"
+
+
+def _print_storage_report(payload: dict[str, object]) -> None:
+    print(f"measured: {payload['measured_at']}")
+    print(f"{'category':24} {'logical size':>14} {'files':>10}  policy")
+    for category in payload["categories"]:
+        status = category["reclaim_policy"]
+        if category["scan_errors"]:
+            samples = ", ".join(category["scan_error_paths"])
+            status = f"INCOMPLETE ({category['scan_errors']} errors: {samples}); {status}"
+        print(
+            f"{category['name']:24} "
+            f"{_format_bytes(category['bytes']):>14} "
+            f"{category['files']:>10}  {status}"
+        )
+    print(f"{'total':24} {_format_bytes(payload['total_bytes']):>14} {payload['total_files']:>10}")
+    print(f"volume free: {_format_bytes(payload['volume']['free_bytes'])}")
+    if "snapshot" in payload:
+        print(f"snapshot: {payload['snapshot']}")
+
+
+def _print_storage_history(rows: list[dict[str, object]]) -> None:
+    if not rows:
+        print("no storage snapshots")
+        return
+    print(f"{'measured':28} {'managed':>14} {'change':>14} {'volume free':>14}")
+    for row in rows:
+        delta = row["delta_bytes"]
+        formatted_delta = "n/a" if delta is None else _format_bytes(delta, signed=True)
+        print(
+            f"{row['measured_at']:28} "
+            f"{_format_bytes(row['total_bytes']):>14} "
+            f"{formatted_delta:>14} "
+            f"{_format_bytes(row['volume_free_bytes']):>14}"
+        )
+
+
+def _print_reclaim_candidates(rows: list[dict[str, object]], *, applied: bool) -> None:
+    if not rows:
+        print("no reclaim candidates")
+        return
+    verb = "reclaimed" if applied else "candidate"
+    print(f"{'category':20} {'logical size':>14}  {verb}")
+    for row in rows:
+        print(f"{row['category']:20} {_format_bytes(row['bytes']):>14}  {row['path']}")
+    print(f"{'total':20} {_format_bytes(sum(row['bytes'] for row in rows)):>14}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -251,6 +336,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(records, indent=2, sort_keys=True))
             if records and not args.apply:
                 print("lab-bench: dry run; pass --apply to delete", file=sys.stderr)
+            return 0
+        if args.command_name == "storage":
+            if args.storage_operation == "report":
+                payload = bench.storage_report(record=args.record)
+                if args.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    _print_storage_report(payload)
+                return 0
+            if args.storage_operation == "history":
+                history = bench.storage_history(limit=args.limit)
+                if args.json:
+                    print(json.dumps(history, indent=2, sort_keys=True))
+                else:
+                    _print_storage_history(history)
+                return 0
+            candidates = bench.storage_clean(
+                categories=args.category,
+                older_than_days=args.older_than_days,
+                apply=args.apply,
+            )
+            if args.json:
+                print(json.dumps(candidates, indent=2, sort_keys=True))
+            else:
+                _print_reclaim_candidates(candidates, applied=args.apply)
+            if candidates and not args.apply:
+                print("lab-bench: dry run; pass --apply to reclaim", file=sys.stderr)
             return 0
         if args.command_name == "with-secrets":
             return bench.with_secrets(args.profile, args.child_command)

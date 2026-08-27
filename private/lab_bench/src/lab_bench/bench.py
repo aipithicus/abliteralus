@@ -17,6 +17,12 @@ from abliteralus.run_paths import (
     clean_stale_run_workspaces,
     list_run_workspaces,
 )
+from abliteralus.storage import (
+    measure_storage,
+    read_storage_history,
+    reclaim_storage,
+    record_storage_snapshot,
+)
 
 from secret_manager import SecretManager
 from surgery_artifacts import ArtifactRegistry, rehydrate_capsule, validate_capsule
@@ -297,6 +303,32 @@ class LabBench:
             apply=apply,
         )
         return [record.to_dict() for record in records]
+
+    def storage_report(self, *, record: bool = False) -> dict[str, object]:
+        report = measure_storage(self.config.repository)
+        payload = report.to_dict()
+        if record:
+            snapshot = record_storage_snapshot(self.config.repository, report)
+            payload["snapshot"] = str(snapshot.relative_to(self.config.repository).as_posix())
+        return payload
+
+    def storage_history(self, *, limit: int = 20) -> list[dict[str, object]]:
+        return read_storage_history(self.config.repository, limit=limit)
+
+    def storage_clean(
+        self,
+        *,
+        categories: Sequence[str],
+        older_than_days: float,
+        apply: bool,
+    ) -> list[dict[str, object]]:
+        candidates = reclaim_storage(
+            self.config.repository,
+            categories=categories,
+            older_than=timedelta(days=older_than_days),
+            apply=apply,
+        )
+        return [candidate.to_dict(self.config.repository) for candidate in candidates]
 
     def artifact_verify(self, capsule: str | Path) -> dict[str, object]:
         validation = validate_capsule(capsule)
