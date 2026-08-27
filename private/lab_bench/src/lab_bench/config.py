@@ -62,6 +62,11 @@ class ArtifactDefaults:
 
 
 @dataclass(frozen=True, slots=True)
+class JournalDefaults:
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class LabBenchConfig:
     path: Path
     repository: Path
@@ -70,6 +75,7 @@ class LabBenchConfig:
     profiles: ProfileNames
     lightning: LightningDefaults
     artifacts: ArtifactDefaults
+    journal: JournalDefaults
     ssh: SshDefaults
     schema_version: int = 1
 
@@ -121,6 +127,7 @@ def parse_config(raw: Mapping[str, Any], *, path: Path | None = None) -> LabBenc
             "profiles",
             "lightning",
             "artifacts",
+            "journal",
             "ssh",
         },
         "config",
@@ -135,6 +142,7 @@ def parse_config(raw: Mapping[str, Any], *, path: Path | None = None) -> LabBenc
     profiles = _parse_profiles(_required_table(table, "profiles", "config"))
     lightning = _parse_lightning(_required_table(table, "lightning", "config"))
     artifacts = _parse_artifacts(table.get("artifacts", {}), base, repository)
+    journal = _parse_journal(table.get("journal", {}), base, repository)
     ssh = _parse_ssh(_required_table(table, "ssh", "config"), base)
     return LabBenchConfig(
         path=config_path,
@@ -144,6 +152,7 @@ def parse_config(raw: Mapping[str, Any], *, path: Path | None = None) -> LabBenc
         profiles=profiles,
         lightning=lightning,
         artifacts=artifacts,
+        journal=journal,
         ssh=ssh,
     )
 
@@ -286,6 +295,31 @@ def _parse_artifacts(
     else:
         registry = (repository / path).resolve()
     return ArtifactDefaults(registry=registry)
+
+
+def _parse_journal(
+    value: Any,
+    base: Path,
+    repository: Path,
+) -> JournalDefaults:
+    table = _table(value, "journal")
+    _unknown(table, {"path"}, "journal")
+    raw = _optional_string(
+        table,
+        "path",
+        "outputs/research-journal/journal.jsonl",
+        "journal",
+    )
+    path = Path(raw).expanduser()
+    if path.suffix.lower() != ".jsonl":
+        raise LabBenchError("journal.path must name a .jsonl file")
+    if path.is_absolute():
+        resolved = path.resolve()
+    elif "path" in table:
+        resolved = (base / path).resolve()
+    else:
+        resolved = (repository / path).resolve()
+    return JournalDefaults(path=resolved)
 
 
 def _resolved_path(value: str, base: Path) -> Path:

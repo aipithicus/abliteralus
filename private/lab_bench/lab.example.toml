@@ -33,6 +33,10 @@ inference_max_runtime_seconds = 3600
 # Durable local storage. Lightning remains compute and staging, not the registry.
 registry = "../../outputs/artifact-registry"
 
+[journal]
+# Private local research history. Sharing is always a separate, explicit action.
+path = "../../outputs/research-journal/journal.jsonl"
+
 [ssh]
 executable = "ssh"
 destination = ""

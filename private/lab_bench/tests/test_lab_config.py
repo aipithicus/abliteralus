@@ -53,6 +53,26 @@ def test_config_resolves_paths_and_machine_purposes() -> None:
     assert config.lightning.surgery_fallback_machines == ()
     assert config.lightning.surgery_max_runtime_seconds is None
     assert config.artifacts.registry == repository.resolve() / "outputs/artifact-registry"
+    assert config.journal.path == repository.resolve() / "outputs/research-journal/journal.jsonl"
+
+
+def test_explicit_journal_path_is_config_relative(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    raw = sample_mapping(repository)
+    raw["journal"] = {"path": "state/experiments.jsonl"}
+    config_path = tmp_path / "config" / "lab.local.toml"
+
+    config = parse_config(raw, path=config_path)
+
+    assert config.journal.path == config_path.parent / "state/experiments.jsonl"
+
+
+def test_journal_path_requires_jsonl_suffix() -> None:
+    raw = sample_mapping(Path.cwd())
+    raw["journal"] = {"path": "outputs/research-journal/journal.json"}
+
+    with pytest.raises(LabBenchError, match="must name a .jsonl file"):
+        parse_config(raw)
 
 
 def test_config_parses_unattended_allocation_policy() -> None:

@@ -6,10 +6,14 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 from abliteralus.storage import RECLAIMABLE_CATEGORIES
 from secret_manager.errors import SecretManagerError
 from surgery_artifacts.errors import ArtifactError
+
+from research_journal import SHARING_STATES, ResearchJournalError
 
 from . import __version__
 from .bench import LabBench
@@ -178,6 +182,36 @@ def _parser() -> argparse.ArgumentParser:
     ssh.add_argument("--destination")
     ssh.add_argument("remote_command", nargs=argparse.REMAINDER)
 
+    journal = commands.add_parser(
+        "journal", help="append, query, verify, and recover the private research journal"
+    )
+    journal_commands = journal.add_subparsers(dest="journal_operation", required=True)
+    journal_add = journal_commands.add_parser("add", help="append one immutable research entry")
+    journal_add.add_argument("--kind", required=True)
+    journal_add.add_argument("--title", required=True)
+    journal_body = journal_add.add_mutually_exclusive_group()
+    journal_body.add_argument("--body", default="")
+    journal_body.add_argument("--body-file")
+    journal_add.add_argument("--actor")
+    journal_add.add_argument("--tag", action="append", default=[])
+    _add_journal_relation_arguments(journal_add)
+    journal_add.add_argument("--data-file", help="UTF-8 JSON object for structured results")
+    journal_add.add_argument("--sharing", choices=sorted(SHARING_STATES), default="private")
+
+    journal_list = journal_commands.add_parser("list", help="list newest matching entries")
+    journal_list.add_argument("--limit", type=_positive_integer, default=20)
+    journal_list.add_argument("--kind")
+    journal_list.add_argument("--tag", action="append", default=[])
+    _add_journal_relation_arguments(journal_list)
+
+    journal_show = journal_commands.add_parser("show", help="show one entry by UUID")
+    journal_show.add_argument("entry_id")
+    journal_commands.add_parser("verify", help="verify framing, schema, hashes, and the chain")
+    journal_repair = journal_commands.add_parser(
+        "repair", help="preview or recover a corrupt suffix"
+    )
+    journal_repair.add_argument("--apply", action="store_true")
+
     artifact = commands.add_parser("artifact", help="verify and manage durable surgery capsules")
     artifact_commands = artifact.add_subparsers(dest="artifact_operation", required=True)
     verify = artifact_commands.add_parser("verify")
@@ -223,6 +257,7 @@ def _print_inventory(payload: dict) -> None:
     ssh = payload["ssh"]
     print(f"SSH: {ssh['destination'] or 'not configured'}")
     print(f"artifact registry: {payload['artifacts']['registry']}")
+    print(f"research journal: {payload['journal']['path']}")
 
 
 def _format_bytes(value: int, *, signed: bool = False) -> str:
@@ -288,6 +323,54 @@ def _print_reclaim_candidates(rows: list[dict[str, object]], *, applied: bool) -
     for row in rows:
         print(f"{row['category']:20} {_format_bytes(row['bytes']):>14}  {row['path']}")
     print(f"{'total':20} {_format_bytes(sum(row['bytes'] for row in rows)):>14}")
+
+
+def _add_journal_relation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--run-id", action="append", default=[])
+    parser.add_argument("--model", action="append", default=[])
+    parser.add_argument("--artifact", action="append", default=[])
+    parser.add_argument("--relation", action="append", default=[], metavar="TYPE=TARGET")
+
+
+def _parse_journal_relation(value: str) -> dict[str, str]:
+    relation_type, separator, target = value.partition("=")
+    if not separator or not relation_type.strip() or not target.strip():
+        raise ValueError("journal relations must use TYPE=TARGET")
+    return {"type": relation_type.strip(), "target": target.strip()}
+
+
+def _journal_relations(args: argparse.Namespace) -> list[dict[str, str]]:
+    relations = [_parse_journal_relation(value) for value in args.relation]
+    for relation_type, attribute in (
+        ("run", "run_id"),
+        ("model", "model"),
+        ("artifact", "artifact"),
+    ):
+        relations.extend(
+            {"type": relation_type, "target": target} for target in getattr(args, attribute)
+        )
+    return relations
+
+
+def _read_journal_body(args: argparse.Namespace) -> str:
+    if args.body_file is None:
+        return args.body
+    if args.body_file == "-":
+        return sys.stdin.read()
+    return Path(args.body_file).read_text(encoding="utf-8")
+
+
+def _read_journal_data(path: str | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    if path == "-":
+        value = json.load(sys.stdin)
+    else:
+        with Path(path).open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    if not isinstance(value, dict):
+        raise ValueError("--data-file must contain one JSON object")
+    return value
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -368,6 +451,51 @@ def main(argv: Sequence[str] | None = None) -> int:
             return bench.with_secrets(args.profile, args.child_command)
         if args.command_name == "ssh":
             return bench.ssh(args.remote_command, destination=args.destination)
+        if args.command_name == "journal":
+            if args.journal_operation == "add":
+                if args.body_file == "-" and args.data_file == "-":
+                    raise ValueError("--body-file and --data-file cannot both read standard input")
+                entry = bench.journal_add(
+                    kind=args.kind,
+                    title=args.title,
+                    body=_read_journal_body(args),
+                    actor=args.actor,
+                    tags=args.tag,
+                    relations=_journal_relations(args),
+                    data=_read_journal_data(args.data_file),
+                    sharing=args.sharing,
+                )
+                print(json.dumps(entry, indent=2, sort_keys=True, ensure_ascii=False))
+                return 0
+            if args.journal_operation == "list":
+                entries = bench.journal_list(
+                    limit=args.limit,
+                    kind=args.kind,
+                    tags=args.tag,
+                    relations=_journal_relations(args),
+                )
+                print(json.dumps(entries, indent=2, sort_keys=True, ensure_ascii=False))
+                return 0
+            if args.journal_operation == "show":
+                print(
+                    json.dumps(
+                        bench.journal_show(args.entry_id),
+                        indent=2,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    )
+                )
+                return 0
+            if args.journal_operation == "verify":
+                inspection = bench.journal_verify()
+                print(json.dumps(inspection, indent=2, sort_keys=True))
+                return 0 if inspection["valid"] else 2
+            if args.journal_operation == "repair":
+                result = bench.journal_repair(apply=args.apply)
+                print(json.dumps(result, indent=2, sort_keys=True))
+                if result["needed"] and not args.apply:
+                    print("lab-bench: dry run; pass --apply to repair", file=sys.stderr)
+                return 0
         if args.command_name == "artifact":
             if args.artifact_operation == "verify":
                 print(json.dumps(bench.artifact_verify(args.capsule), indent=2, sort_keys=True))
@@ -441,6 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ArtifactError,
         LabBenchError,
         OSError,
+        ResearchJournalError,
         SecretManagerError,
         ValueError,
     ) as error:

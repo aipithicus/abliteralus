@@ -10,6 +10,8 @@ it does not create a second surgery implementation.
 - Interactive shells use the system OpenSSH client and the existing OS SSH
   key/agent. SSH private keys are not moved into Proton Pass.
 - Every credential-bearing local subprocess is launched through `secret_manager`.
+- Research notes and result metadata are written through the standalone,
+  integrity-checked `research_journal` package.
 
 The tracked example contains no account IDs or secrets. Copy `lab.example.toml` to
 the ignored `lab.local.toml`, set `OWNER/TEAMSPACE`, and optionally paste the SSH
@@ -21,7 +23,7 @@ enabled; this tool does not add permissive SSH options.
 From the ABLITERALUS repository root:
 
 ```text
-deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/surgery_artifacts --editable private/lab_bench
+deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/surgery_artifacts --editable private/research_journal --editable private/lab_bench
 ```
 
 This installs both console commands into the existing project venv; it does not
@@ -117,6 +119,49 @@ reclamation rather than guessed at. Caches selected through externally overridde
 the census and cleanup authority. The `uv-cache` category also accounts for the
 older workspace path `.scratch/uv-cache`, allowing it to age out safely after the
 canonical `.scratch/cache/uv` path takes over.
+
+## Private research journal
+
+The journal is an ABLITERALUS-owned implementation under `private/research_journal`;
+it has no runtime import or path dependency on Codex Scientiae. By default,
+`lab-bench` stores it at `outputs/research-journal/journal.jsonl`. Each line is
+canonical UTF-8 JSON, append operations are serialized across processes, and every
+record links to the previous record by SHA-256. The chain detects truncation,
+reordering, and edits; it is an integrity check, not a cryptographic signature.
+
+Entries are explicit rather than inferred from subprocesses. Relate a note to its
+durable evidence using the shorthand relation flags, and put machine-readable
+measurements in a JSON object:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml journal add --kind experiment.plan --title "Llama Guard positive steering sweep" --run-id guard-sweep-001 --model meta-llama/Llama-Guard-3-1B --tag llama-guard
+
+lab-bench --config private/lab_bench/lab.local.toml journal add --kind experiment.observation --title "Layer 12 crossed baseline" --body-file outputs/guard-sweep-001/observation.md --data-file outputs/guard-sweep-001/metrics.json --run-id guard-sweep-001 --artifact guard/sweep-positive-002
+
+lab-bench --config private/lab_bench/lab.local.toml journal list --model meta-llama/Llama-Guard-3-1B --limit 10
+lab-bench --config private/lab_bench/lab.local.toml journal show ENTRY_UUID
+lab-bench --config private/lab_bench/lab.local.toml journal verify
+```
+
+`--relation TYPE=TARGET` adds domain-specific links beyond the built-in `--run-id`,
+`--model`, and `--artifact` shorthands. Entry sharing state defaults to `private`;
+`candidate` and `approved` record curation intent only. Nothing uploads, syncs, or
+submits to OBLITERATUS automatically. The writer rejects known credential field
+names and common token/private-key patterns, but the journal should still never be
+used for secrets.
+
+Recovery is preview-first. If verification finds an incomplete or corrupt suffix,
+the apply step preserves the entire original in a timestamped `.bak` file before
+replacing the journal with its last valid prefix:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml journal repair
+lab-bench --config private/lab_bench/lab.local.toml journal repair --apply
+```
+
+The lower-level `research-journal --journal PATH ...` command is available for
+other local projects that want the same portable store without depending on the
+ABLITERALUS control plane.
 
 ## Local surgery and inference
 

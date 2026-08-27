@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aipithicus.org/schemas/research-journal/record-v1",
+  "title": "Research journal record v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "schema_version",
+        "record_type",
+        "journal_id",
+        "created_at",
+        "previous_hash",
+        "record_hash"
+      ],
+      "properties": {
+        "schema": {"const": "https://aipithicus.org/schemas/research-journal/record-v1"},
+        "schema_version": {"const": 1},
+        "record_type": {"const": "research-journal/header"},
+        "journal_id": {"type": "string", "format": "uuid"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "previous_hash": {"type": "null"},
+        "record_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "schema_version",
+        "record_type",
+        "journal_id",
+        "entry_id",
+        "recorded_at",
+        "kind",
+        "title",
+        "body",
+        "actor",
+        "tags",
+        "relations",
+        "data",
+        "sharing",
+        "previous_hash",
+        "record_hash"
+      ],
+      "properties": {
+        "schema": {"const": "https://aipithicus.org/schemas/research-journal/record-v1"},
+        "schema_version": {"const": 1},
+        "record_type": {"const": "research-journal/entry"},
+        "journal_id": {"type": "string", "format": "uuid"},
+        "entry_id": {"type": "string", "format": "uuid"},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "kind": {"type": "string", "pattern": "^[a-z][a-z0-9._/-]{0,79}$"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 240},
+        "body": {"type": "string", "maxLength": 65536},
+        "actor": {"type": ["string", "null"], "maxLength": 160},
+        "tags": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$"}
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "target"],
+            "properties": {
+              "type": {"type": "string", "pattern": "^[a-z][a-z0-9._/-]{0,79}$"},
+              "target": {"type": "string", "minLength": 1, "maxLength": 1024}
+            }
+          }
+        },
+        "data": {"type": "object"},
+        "sharing": {"enum": ["private", "candidate", "approved"]},
+        "previous_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "record_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from abliteralus.run_paths import (
     RunWorkspace,
@@ -24,6 +24,7 @@ from abliteralus.storage import (
     record_storage_snapshot,
 )
 
+from research_journal import ResearchJournal
 from secret_manager import SecretManager
 from surgery_artifacts import ArtifactRegistry, rehydrate_capsule, validate_capsule
 
@@ -82,6 +83,7 @@ class LabBench:
                 ),
             },
             "artifacts": {"registry": str(self.config.artifacts.registry)},
+            "journal": {"path": str(self.config.journal.path)},
             "ssh": {
                 "executable": self.config.ssh.executable,
                 "destination": self.config.ssh.destination,
@@ -329,6 +331,53 @@ class LabBench:
             apply=apply,
         )
         return [candidate.to_dict(self.config.repository) for candidate in candidates]
+
+    def journal_add(
+        self,
+        *,
+        kind: str,
+        title: str,
+        body: str = "",
+        actor: str | None = None,
+        tags: Sequence[str] = (),
+        relations: Sequence[Mapping[str, str]] = (),
+        data: Mapping[str, Any] | None = None,
+        sharing: str = "private",
+    ) -> dict[str, Any]:
+        return ResearchJournal(self.config.journal.path).append(
+            kind=kind,
+            title=title,
+            body=body,
+            actor=actor,
+            tags=tags,
+            relations=relations,
+            data=data,
+            sharing=sharing,
+        )
+
+    def journal_list(
+        self,
+        *,
+        limit: int = 20,
+        kind: str | None = None,
+        tags: Sequence[str] = (),
+        relations: Sequence[Mapping[str, str]] = (),
+    ) -> list[dict[str, Any]]:
+        return ResearchJournal(self.config.journal.path).list_entries(
+            limit=limit,
+            kind=kind,
+            tags=tags,
+            relations=relations,
+        )
+
+    def journal_show(self, entry_id: str) -> dict[str, Any]:
+        return ResearchJournal(self.config.journal.path).get_entry(entry_id)
+
+    def journal_verify(self) -> dict[str, object]:
+        return ResearchJournal(self.config.journal.path).inspect().to_dict()
+
+    def journal_repair(self, *, apply: bool = False) -> dict[str, object]:
+        return ResearchJournal(self.config.journal.path).repair(apply=apply).to_dict()
 
     def artifact_verify(self, capsule: str | Path) -> dict[str, object]:
         validation = validate_capsule(capsule)

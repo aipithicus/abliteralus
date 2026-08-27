@@ -13,6 +13,7 @@ authors = [{ name = "Aipithicus Enterprises" }]
 dependencies = [
   "aipithicus-secret-manager",
   "aipithicus-surgery-artifacts",
+  "aipithicus-research-journal",
   "lightning-sdk==2026.8.18",
 ]
 
@@ -22,6 +23,7 @@ lab-bench = "lab_bench.cli:main"
 [tool.uv.sources]
 aipithicus-secret-manager = { workspace = true }
 aipithicus-surgery-artifacts = { workspace = true }
+aipithicus-research-journal = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]

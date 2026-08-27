@@ -389,3 +389,31 @@ def test_ssh_keeps_host_verification_defaults_and_quotes_remote_command(
     assert command[-2] == "researcher@example.invalid"
     assert command[-1] == "python 'chat client.py'"
     assert command[0] == str(Path(sys.executable).resolve())
+
+
+def test_journal_methods_use_the_configured_private_store(tmp_path: Path) -> None:
+    raw = sample_mapping(Path.cwd())
+    journal_path = tmp_path / "journal.jsonl"
+    raw["journal"] = {"path": str(journal_path)}
+    config = parse_config(raw, path=tmp_path / "lab.local.toml")
+    bench = LabBench(config, manager=FakeManager())
+    relations = [
+        {"type": "run", "target": "guard-baseline-001"},
+        {"type": "model", "target": "meta-llama/Llama-Guard-3-1B"},
+        {"type": "artifact", "target": "guard/sweep-positive-002"},
+    ]
+
+    entry = bench.journal_add(
+        kind="experiment.observation",
+        title="Positive steering moved the unsafe margin",
+        body="The reversible sweep crossed baseline at layer 12.",
+        tags=["llama-guard", "steering"],
+        relations=relations,
+        data={"margin_delta": 0.18},
+    )
+
+    assert journal_path.is_file()
+    assert bench.inventory()["journal"]["path"] == str(journal_path.resolve())
+    assert bench.journal_verify()["valid"] is True
+    assert bench.journal_show(entry["entry_id"])["title"] == entry["title"]
+    assert bench.journal_list(relations=[relations[0]]) == [entry]
