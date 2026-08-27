@@ -74,7 +74,10 @@ def test_online_local_surgery_uses_local_profile(configured_bench) -> None:
     assert call["profile"] == "local-surgery"
     assert call["command"][1:3] == ["-m", "surgery_artifacts.integration"]
     assert str(Path("private") / "surgery_artifacts" / "src") in call["environ"]["PYTHONPATH"]
-    assert call["command"][-3:] == ["run", "--config", "experiment.yaml"]
+    assert call["command"][3:6] == ["run", "--config", "experiment.yaml"]
+    assert call["command"][-2] == "--run-id"
+    assert call["environ"]["ABLITERALUS_RUN_ID"] == call["command"][-1]
+    assert call["environ"]["TEMP"].endswith(str(Path("temp")))
 
 
 def test_offline_local_surgery_does_not_load_secret_manager(
@@ -91,7 +94,8 @@ def test_offline_local_surgery_does_not_load_secret_manager(
 
     assert bench.local_surgery(["run", "--config", "experiment.yaml", "--offline"]) == 0
     assert not manager.calls
-    assert observed["command"][-1] == "--offline"
+    assert "--offline" in observed["command"]
+    assert "--run-id" in observed["command"]
 
 
 def test_anonymous_local_surgery_strips_hub_credentials(
@@ -115,10 +119,9 @@ def test_anonymous_local_surgery_strips_hub_credentials(
     assert "HF_TOKEN" not in observed["environ"]
     assert "HUGGING_FACE_HUB_TOKEN" not in observed["environ"]
     assert observed["environ"]["HF_HUB_DISABLE_IMPLICIT_TOKEN"] == "1"
-    assert observed["environ"]["HF_HOME"] == str(
-        Path.cwd() / ".scratch" / "cache" / "huggingface"
-    )
-    assert observed["command"][-3:] == ["run", "--config", "experiment.yaml"]
+    assert observed["environ"]["HF_HOME"] == str(Path.cwd() / ".scratch" / "cache" / "huggingface")
+    assert observed["command"][3:6] == ["run", "--config", "experiment.yaml"]
+    assert "--run-id" in observed["command"]
 
 
 def test_lightning_plan_adds_defaults_without_credentials(
@@ -150,6 +153,7 @@ def test_lightning_plan_adds_defaults_without_credentials(
     assert command[command.index("--pending-policy") + 1] == "adopt"
     assert command[command.index("--fallback-machine") + 1] == "H100"
     assert command[command.index("--max-runtime") + 1] == "14400"
+    assert "--run-id" in command
 
 
 def test_lightning_run_uses_surgery_profile_and_preserves_overrides(configured_bench) -> None:
@@ -173,6 +177,93 @@ def test_lightning_run_uses_surgery_profile_and_preserves_overrides(configured_b
     assert call["profile"] == "lightning-surgery"
     assert call["command"].count("--forward-env") == 1
     assert call["command"][call["command"].index("--machine") + 1] == "A10G"
+    assert (
+        call["environ"]["ABLITERALUS_RUN_ID"]
+        == call["command"][call["command"].index("--run-id") + 1]
+    )
+
+
+def test_explicit_surgery_run_id_is_shared_with_workspace(configured_bench) -> None:
+    bench, manager = configured_bench
+
+    assert (
+        bench.local_surgery(["run", "--config", "experiment.yaml", "--run-id", "shared-run"]) == 7
+    )
+    call = manager.calls[0]
+    assert call["command"].count("--run-id") == 1
+    assert call["environ"]["ABLITERALUS_RUN_ID"] == "shared-run"
+
+
+def test_local_inference_gets_run_scoped_environment(configured_bench) -> None:
+    bench, manager = configured_bench
+
+    assert bench.local_inference(["python", "chat.py"], run_id="chat-run") == 7
+    call = manager.calls[0]
+    assert call["profile"] == "local-inference"
+    assert call["environ"]["ABLITERALUS_RUN_ID"] == "chat-run"
+    assert call["environ"]["TMP"] == call["environ"]["TEMP"]
+
+
+def test_pytest_launcher_owns_basetemp_and_coverage(
+    configured_bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench, manager = configured_bench
+    observed: dict = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = list(command)
+        observed["environment"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("lab_bench.bench.subprocess.run", fake_run)
+
+    assert bench.test(["tests/test_run_paths.py"], run_id="test-run") == 0
+    assert not manager.calls
+    assert observed["command"][1:3] == ["-m", "pytest"]
+    basetemp = next(value for value in observed["command"] if value.startswith("--basetemp="))
+    assert ".scratch" in basetemp
+    assert "test-run" in basetemp
+    assert observed["environment"]["COVERAGE_FILE"].endswith(str(Path("coverage") / ".coverage"))
+
+
+def test_pytest_launcher_uses_validated_repository_subdirectory(
+    configured_bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench, _manager = configured_bench
+    observed: dict = {}
+
+    def fake_run(command, **kwargs):
+        observed["cwd"] = kwargs["cwd"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("lab_bench.bench.subprocess.run", fake_run)
+    repository = bench.config.repository
+    relative_directory = "private" if (repository / "private").is_dir() else "lab_bench"
+
+    assert bench.test([], working_directory=relative_directory) == 0
+    assert observed["cwd"] == repository / relative_directory
+
+    with pytest.raises(LabBenchError, match="must remain inside"):
+        bench.test([], working_directory=repository.parent)
+
+
+def test_pytest_launcher_rejects_a_shared_basetemp(configured_bench) -> None:
+    bench, manager = configured_bench
+
+    with pytest.raises(LabBenchError, match="owns --basetemp"):
+        bench.test(["--basetemp=.scratch/pytest"])
+    assert not manager.calls
+
+
+def test_pytest_launcher_rejects_inherited_shared_basetemp(
+    configured_bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench, manager = configured_bench
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--basetemp=.scratch/pytest")
+
+    with pytest.raises(LabBenchError, match="remove it from PYTEST_ADDOPTS"):
+        bench.test([])
+    assert not manager.calls
 
 
 def test_studio_control_and_inference_use_distinct_profiles(configured_bench) -> None:

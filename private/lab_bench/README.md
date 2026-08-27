@@ -31,6 +31,47 @@ or invoke `.venv/Scripts/lab-bench.exe` directly.
 Use `--config private/lab_bench/lab.local.toml` explicitly at first. Later, the
 non-secret `LAB_BENCH_CONFIG` variable can point to that file if desired.
 
+## Run workspaces and tests
+
+Every local surgery, Lightning controller, inference child, and managed pytest
+session receives a unique workspace beneath:
+
+```text
+.scratch/runs/<kind>/<UTC-run-id>/
+```
+
+The controller creates the leaf atomically with the repository's normal inherited
+permissions, then sets `TEMP`, `TMP`, and `TMPDIR` before the child interpreter
+starts. It also exposes `ABLITERALUS_RUN_ID` and `ABLITERALUS_WORK_DIR` to the child.
+These directories are disposable and are removed after either success or failure;
+durable checkpoints, capsules, and study results continue to live under `outputs/`.
+The small `run-context.json` records only paths, timestamps, status, and controller
+PID; it never records the child command, environment, or resolved secret values.
+Use `--keep-workdir` before a command's forwarded arguments when debugging.
+
+The managed test launcher replaces the former shared `.scratch/pytest` base and
+keeps coverage state inside the same run workspace:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml test -- tests/test_run_paths.py
+lab-bench --config private/lab_bench/lab.local.toml test --cwd private -- -q
+lab-bench --config private/lab_bench/lab.local.toml test --keep-workdir -- private/lab_bench/tests
+```
+
+A controller killed before its `finally` block may leave a workspace behind.
+Inspection is read-only, and cleanup is preview-first. A workspace whose active
+controller process still exists is never selected:
+
+```text
+lab-bench --config private/lab_bench/lab.local.toml runs list
+lab-bench --config private/lab_bench/lab.local.toml runs clean --older-than-hours 24
+lab-bench --config private/lab_bench/lab.local.toml runs clean --older-than-hours 24 --apply
+```
+
+Hugging Face and uv caches are intentionally shared at `.scratch/cache/huggingface`
+and `.scratch/cache/uv`; they are caches rather than run evidence and are not part
+of stale-run cleanup.
+
 ## Local surgery and inference
 
 ```text
@@ -40,6 +81,11 @@ lab-bench --config private/lab_bench/lab.local.toml local-surgery --anonymous-hu
 
 lab-bench --config private/lab_bench/lab.local.toml local-inference -- python path/to/chat_client.py
 ```
+
+For surgery `run` operations, the controller's generated ID is also supplied as
+`--run-id`, so the disposable controller workspace, durable local output, and
+Lightning remote plan share one correlation identifier. An explicit forwarded
+`--run-id` remains authoritative and is never silently renamed.
 
 Only an online local `run` receives the `local-surgery` Hub profile. Offline runs,
 preflight, postprocessing, and smoke tests run without a credential environment.

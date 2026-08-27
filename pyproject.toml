@@ -98,7 +98,6 @@ addopts = [
     "--strict-markers",
     "-p",
     "no:cacheprovider",
-    "--basetemp=.scratch/pytest",
     "--cov=abliteralus",
     "--cov-report=term-missing",
     "--cov-fail-under=75",

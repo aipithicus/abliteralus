@@ -55,17 +55,50 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run without Proton Pass or implicit Hugging Face credentials",
     )
+    local_surgery.add_argument(
+        "--keep-workdir",
+        action="store_true",
+        help="retain the disposable run workspace for debugging",
+    )
     local_surgery.add_argument("arguments", nargs=argparse.REMAINDER)
 
     lightning_surgery = commands.add_parser(
         "lightning-surgery", help="plan or run through abliteralus.lightning_surgery"
+    )
+    lightning_surgery.add_argument(
+        "--keep-workdir",
+        action="store_true",
+        help="retain the local controller workspace for debugging",
     )
     lightning_surgery.add_argument("arguments", nargs=argparse.REMAINDER)
 
     local_inference = commands.add_parser(
         "local-inference", help="run a local inference command with the read-only Hub profile"
     )
+    local_inference.add_argument("--run-id")
+    local_inference.add_argument("--keep-workdir", action="store_true")
     local_inference.add_argument("child_command", nargs=argparse.REMAINDER)
+
+    tests = commands.add_parser("test", help="run pytest in a unique, controller-owned workspace")
+    tests.add_argument("--run-id")
+    tests.add_argument("--keep-workdir", action="store_true")
+    tests.add_argument(
+        "--cwd",
+        default=".",
+        help="repository-relative suite working directory",
+    )
+    tests.add_argument("arguments", nargs=argparse.REMAINDER)
+
+    runs = commands.add_parser("runs", help="inspect or clean disposable run workspaces")
+    run_commands = runs.add_subparsers(dest="runs_operation", required=True)
+    run_commands.add_parser("list")
+    clean = run_commands.add_parser("clean")
+    clean.add_argument("--older-than-hours", type=_positive_float, default=24.0)
+    clean.add_argument(
+        "--apply",
+        action="store_true",
+        help="delete the displayed stale workspaces; omission is a dry run",
+    )
 
     with_secrets = commands.add_parser(
         "with-secrets", help="run any local command with a named non-privileged profile"
@@ -184,11 +217,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _print_inventory(payload)
             return 0
         if args.command_name == "local-surgery":
-            return bench.local_surgery(args.arguments, anonymous_hub=args.anonymous_hub)
+            return bench.local_surgery(
+                args.arguments,
+                anonymous_hub=args.anonymous_hub,
+                keep_workdir=args.keep_workdir,
+            )
         if args.command_name == "lightning-surgery":
-            return bench.lightning_surgery(args.arguments)
+            return bench.lightning_surgery(
+                args.arguments,
+                keep_workdir=args.keep_workdir,
+            )
         if args.command_name == "local-inference":
-            return bench.local_inference(args.child_command)
+            return bench.local_inference(
+                args.child_command,
+                run_id=args.run_id,
+                keep_workdir=args.keep_workdir,
+            )
+        if args.command_name == "test":
+            return bench.test(
+                args.arguments,
+                run_id=args.run_id,
+                keep_workdir=args.keep_workdir,
+                working_directory=args.cwd,
+            )
+        if args.command_name == "runs":
+            if args.runs_operation == "list":
+                print(json.dumps(bench.run_workspaces(), indent=2, sort_keys=True))
+                return 0
+            records = bench.clean_run_workspaces(
+                older_than_hours=args.older_than_hours,
+                apply=args.apply,
+            )
+            print(json.dumps(records, indent=2, sort_keys=True))
+            if records and not args.apply:
+                print("lab-bench: dry run; pass --apply to delete", file=sys.stderr)
+            return 0
         if args.command_name == "with-secrets":
             return bench.with_secrets(args.profile, args.child_command)
         if args.command_name == "ssh":
@@ -262,7 +325,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             if args.studio_operation == "ports":
                 return bench.studio_ports(args.add)
-    except (ArtifactError, LabBenchError, OSError, SecretManagerError, ValueError) as error:
+    except (
+        ArtifactError,
+        LabBenchError,
+        OSError,
+        SecretManagerError,
+        ValueError,
+    ) as error:
         print(f"lab-bench: {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

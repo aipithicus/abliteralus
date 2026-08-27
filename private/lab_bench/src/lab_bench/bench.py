@@ -7,8 +7,16 @@ import shlex
 import shutil
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
+
+from abliteralus.run_paths import (
+    RunWorkspace,
+    allocate_run_workspace,
+    clean_stale_run_workspaces,
+    list_run_workspaces,
+)
 
 from secret_manager import SecretManager
 from surgery_artifacts import ArtifactRegistry, rehydrate_capsule, validate_capsule
@@ -54,23 +62,15 @@ class LabBench:
                 "inference_machine": self.config.lightning.inference_machine,
                 "remote_root": self.config.lightning.remote_root,
                 "forward_environment": list(self.config.lightning.forward_environment),
-                "allocation_timeout_seconds": (
-                    self.config.lightning.allocation_timeout_seconds
-                ),
+                "allocation_timeout_seconds": (self.config.lightning.allocation_timeout_seconds),
                 "allocation_retry_seconds": self.config.lightning.allocation_retry_seconds,
                 "pending_policy": self.config.lightning.pending_policy,
-                "surgery_fallback_machines": list(
-                    self.config.lightning.surgery_fallback_machines
-                ),
+                "surgery_fallback_machines": list(self.config.lightning.surgery_fallback_machines),
                 "inference_fallback_machines": list(
                     self.config.lightning.inference_fallback_machines
                 ),
-                "control_max_runtime_seconds": (
-                    self.config.lightning.control_max_runtime_seconds
-                ),
-                "surgery_max_runtime_seconds": (
-                    self.config.lightning.surgery_max_runtime_seconds
-                ),
+                "control_max_runtime_seconds": (self.config.lightning.control_max_runtime_seconds),
+                "surgery_max_runtime_seconds": (self.config.lightning.surgery_max_runtime_seconds),
                 "inference_max_runtime_seconds": (
                     self.config.lightning.inference_max_runtime_seconds
                 ),
@@ -88,47 +88,131 @@ class LabBench:
             },
         }
 
-    def local_surgery(self, arguments: Sequence[str], *, anonymous_hub: bool = False) -> int:
+    def local_surgery(
+        self,
+        arguments: Sequence[str],
+        *,
+        anonymous_hub: bool = False,
+        keep_workdir: bool = False,
+    ) -> int:
         surgery_arguments = _arguments(arguments, "local-surgery requires a surgery command")
         module = (
             "surgery_artifacts.integration"
             if surgery_arguments[0] == "run"
             else "abliteralus.surgery_bench"
         )
-        command = self._repository_python(module, surgery_arguments)
-        environment = self._repository_environment()
+        operation = surgery_arguments[0]
+        requested_run_id = (
+            _single_option_value(surgery_arguments, "--run-id") if operation == "run" else None
+        )
         # Postprocessing, smoke tests, and explicitly offline runs do not need Hub access.
         # This conservative literal check can withhold Hub credentials if
         # ``--offline`` appears as another option's value. That safe-direction
         # false positive is preferable to injecting a token into an offline run.
-        needs_hub = surgery_arguments[0] == "run" and "--offline" not in surgery_arguments
-        if anonymous_hub:
-            environment.pop("HF_TOKEN", None)
-            environment.pop("HUGGING_FACE_HUB_TOKEN", None)
-            environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+        needs_hub = operation == "run" and "--offline" not in surgery_arguments
+
+        def invoke(workspace: RunWorkspace) -> int:
+            expanded = list(surgery_arguments)
+            if operation == "run" and not _has_option(expanded, "--run-id"):
+                expanded.extend(["--run-id", workspace.run_id])
+            command = self._repository_python(module, expanded)
+            environment = workspace.child_environment(self._repository_environment())
+            if anonymous_hub:
+                environment.pop("HF_TOKEN", None)
+                environment.pop("HUGGING_FACE_HUB_TOKEN", None)
+                environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+                return self._direct(command, environ=environment)
+            if needs_hub:
+                return self.manager.run(
+                    self.config.profiles.local_surgery,
+                    command,
+                    environ=environment,
+                    cwd=self.config.repository,
+                ).returncode
             return self._direct(command, environ=environment)
-        if needs_hub:
+
+        return self._run_scoped(
+            "local-surgery",
+            invoke,
+            run_id=requested_run_id,
+            keep_workdir=keep_workdir,
+        )
+
+    def local_inference(
+        self,
+        command: Sequence[str],
+        *,
+        run_id: str | None = None,
+        keep_workdir: bool = False,
+    ) -> int:
+        child = _arguments(command, "local-inference requires a child command")
+
+        def invoke(workspace: RunWorkspace) -> int:
+            environment = workspace.child_environment(self._repository_environment())
             return self.manager.run(
-                self.config.profiles.local_surgery,
-                command,
+                self.config.profiles.local_inference,
+                child,
                 environ=environment,
                 cwd=self.config.repository,
             ).returncode
-        return self._direct(command, environ=environment)
 
-    def local_inference(self, command: Sequence[str]) -> int:
-        child = _arguments(command, "local-inference requires a child command")
-        return self.manager.run(
-            self.config.profiles.local_inference,
-            child,
-            cwd=self.config.repository,
-        ).returncode
+        return self._run_scoped(
+            "local-inference",
+            invoke,
+            run_id=run_id,
+            keep_workdir=keep_workdir,
+        )
+
+    def test(
+        self,
+        arguments: Sequence[str],
+        *,
+        run_id: str | None = None,
+        keep_workdir: bool = False,
+        working_directory: str | Path = ".",
+    ) -> int:
+        """Run pytest with controller-owned temp and coverage paths."""
+
+        pytest_arguments = _strip_separator(arguments)
+        if _has_option(pytest_arguments, "--basetemp"):
+            raise LabBenchError("the managed test launcher owns --basetemp")
+        test_directory = self._repository_subdirectory(working_directory)
+
+        def invoke(workspace: RunWorkspace) -> int:
+            expanded = list(pytest_arguments)
+            expanded.append(f"--basetemp={workspace.temp_dir / 'pytest'}")
+            command = self._repository_python("pytest", expanded)
+            repository_environment = self._repository_environment()
+            inherited_addopts = repository_environment.get("PYTEST_ADDOPTS", "")
+            if inherited_addopts:
+                try:
+                    inherited_arguments = shlex.split(inherited_addopts, posix=os.name != "nt")
+                except ValueError as error:
+                    raise LabBenchError("PYTEST_ADDOPTS is not valid shell syntax") from error
+                if _has_option(inherited_arguments, "--basetemp"):
+                    raise LabBenchError(
+                        "the managed test launcher owns --basetemp; remove it from PYTEST_ADDOPTS"
+                    )
+            environment = workspace.child_environment(repository_environment, coverage=True)
+            return self._direct(command, environ=environment, cwd=test_directory)
+
+        return self._run_scoped(
+            "pytest",
+            invoke,
+            run_id=run_id,
+            keep_workdir=keep_workdir,
+        )
 
     def with_secrets(self, profile: str, command: Sequence[str]) -> int:
         child = _arguments(command, "with-secrets requires a child command")
         return self.manager.run(profile, child, cwd=self.config.repository).returncode
 
-    def lightning_surgery(self, arguments: Sequence[str]) -> int:
+    def lightning_surgery(
+        self,
+        arguments: Sequence[str],
+        *,
+        keep_workdir: bool = False,
+    ) -> int:
         self._require_lightning_target()
         surgery_arguments = _arguments(
             arguments, "lightning-surgery requires an operation and arguments"
@@ -165,20 +249,54 @@ class LabBench:
                     "--max-runtime",
                     str(self.config.lightning.control_max_runtime_seconds),
                 )
-        command = self._repository_python("abliteralus.lightning_surgery", expanded)
-        if operation == "plan" or (operation == "provision" and "--dry-run" in expanded):
-            return self._direct(command)
-        profile = (
-            self.config.profiles.lightning_surgery
-            if operation == "run"
-            else self.config.profiles.lightning_control
+        requested_run_id = (
+            _single_option_value(expanded, "--run-id") if operation in {"plan", "run"} else None
         )
-        return self.manager.run(
-            profile,
-            command,
-            environ=self._repository_environment(),
-            cwd=self.config.repository,
-        ).returncode
+
+        def invoke(workspace: RunWorkspace) -> int:
+            scoped_arguments = list(expanded)
+            if operation in {"plan", "run"} and not _has_option(scoped_arguments, "--run-id"):
+                scoped_arguments.extend(["--run-id", workspace.run_id])
+            command = self._repository_python("abliteralus.lightning_surgery", scoped_arguments)
+            environment = workspace.child_environment(self._repository_environment())
+            if operation == "plan" or (
+                operation == "provision" and "--dry-run" in scoped_arguments
+            ):
+                return self._direct(command, environ=environment)
+            profile = (
+                self.config.profiles.lightning_surgery
+                if operation == "run"
+                else self.config.profiles.lightning_control
+            )
+            return self.manager.run(
+                profile,
+                command,
+                environ=environment,
+                cwd=self.config.repository,
+            ).returncode
+
+        return self._run_scoped(
+            f"lightning-{operation}",
+            invoke,
+            run_id=requested_run_id,
+            keep_workdir=keep_workdir,
+        )
+
+    def run_workspaces(self) -> list[dict[str, object]]:
+        return [record.to_dict() for record in list_run_workspaces(self.config.repository)]
+
+    def clean_run_workspaces(
+        self,
+        *,
+        older_than_hours: float,
+        apply: bool,
+    ) -> list[dict[str, object]]:
+        records = clean_stale_run_workspaces(
+            self.config.repository,
+            older_than=timedelta(hours=older_than_hours),
+            apply=apply,
+        )
+        return [record.to_dict() for record in records]
 
     def artifact_verify(self, capsule: str | Path) -> dict[str, object]:
         validation = validate_capsule(capsule)
@@ -215,7 +333,11 @@ class LabBench:
         output: str | Path,
     ) -> Path:
         candidate = Path(capsule_or_ref).expanduser()
-        capsule = candidate.resolve() if candidate.is_dir() else self.artifact_resolve(str(capsule_or_ref))
+        capsule = (
+            candidate.resolve()
+            if candidate.is_dir()
+            else self.artifact_resolve(str(capsule_or_ref))
+        )
         return rehydrate_capsule(capsule, base, output)
 
     def studio_provision(
@@ -447,11 +569,12 @@ class LabBench:
         command: Sequence[str],
         *,
         environ: dict[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> int:
         try:
             completed = subprocess.run(
                 command,
-                cwd=self.config.repository,
+                cwd=cwd or self.config.repository,
                 env=environ,
                 check=False,
                 close_fds=True,
@@ -460,10 +583,30 @@ class LabBench:
             raise LabBenchError("lab child command could not start") from error
         return completed.returncode
 
+    def _repository_subdirectory(self, value: str | Path) -> Path:
+        candidate = Path(value).expanduser()
+        resolved = (
+            (self.config.repository / candidate).resolve()
+            if not candidate.is_absolute()
+            else candidate.resolve()
+        )
+        try:
+            resolved.relative_to(self.config.repository)
+        except ValueError as error:
+            raise LabBenchError(
+                "test working directory must remain inside the repository"
+            ) from error
+        if not resolved.is_dir():
+            raise LabBenchError(f"test working directory does not exist: {resolved}")
+        return resolved
+
     def _repository_environment(self) -> dict[str, str]:
         environment = dict(os.environ)
         environment.setdefault(
             "HF_HOME", str(self.config.repository / ".scratch" / "cache" / "huggingface")
+        )
+        environment.setdefault(
+            "UV_CACHE_DIR", str(self.config.repository / ".scratch" / "cache" / "uv")
         )
         source = self.config.repository / "private" / "surgery_artifacts" / "src"
         existing = environment.get("PYTHONPATH", "")
@@ -471,6 +614,58 @@ class LabBench:
             str(source) if not existing else os.pathsep.join((str(source), existing))
         )
         return environment
+
+    def _run_scoped(
+        self,
+        kind: str,
+        invoke: Callable[[RunWorkspace], int],
+        *,
+        run_id: str | None,
+        keep_workdir: bool,
+    ) -> int:
+        workspace = allocate_run_workspace(
+            self.config.repository,
+            kind,
+            run_id=run_id,
+        )
+        print(
+            f"lab-bench: run {workspace.run_id} workdir {workspace.path}",
+            file=sys.stderr,
+        )
+        active_error: BaseException | None = None
+        try:
+            returncode = invoke(workspace)
+            workspace.record_result(returncode)
+            return returncode
+        except BaseException as error:
+            active_error = error
+            try:
+                if isinstance(error, KeyboardInterrupt):
+                    workspace.record_interrupted()
+                else:
+                    workspace.record_result(1)
+            except OSError as record_error:
+                print(
+                    f"lab-bench: could not update run context: {record_error}",
+                    file=sys.stderr,
+                )
+            raise
+        finally:
+            if keep_workdir:
+                print(f"lab-bench: kept workdir {workspace.path}", file=sys.stderr)
+            else:
+                try:
+                    workspace.cleanup()
+                except OSError as cleanup_error:
+                    if active_error is not None:
+                        print(
+                            f"lab-bench: could not clean workdir {workspace.path}: {cleanup_error}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        raise LabBenchError(
+                            f"could not clean run workdir {workspace.path}: {cleanup_error}"
+                        ) from cleanup_error
 
 
 def _arguments(arguments: Sequence[str], message: str) -> list[str]:
@@ -504,6 +699,18 @@ def _option_values(arguments: Sequence[str], option: str) -> list[str]:
         elif argument == option and index + 1 < len(arguments):
             values.append(arguments[index + 1])
     return values
+
+
+def _single_option_value(arguments: Sequence[str], option: str) -> str | None:
+    if not _has_option(arguments, option):
+        return None
+    values = _option_values(arguments, option)
+    occurrences = sum(
+        argument == option or argument.startswith(f"{option}=") for argument in arguments
+    )
+    if occurrences != 1 or len(values) != 1 or not values[0]:
+        raise LabBenchError(f"{option} must be supplied exactly once with a value")
+    return values[0]
 
 
 def _resolve_executable(configured: str, label: str) -> str:
