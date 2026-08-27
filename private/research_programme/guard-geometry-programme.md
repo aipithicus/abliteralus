@@ -76,6 +76,15 @@ codebase in hand.
 - **Template covariance** — activation variance shared across all cases due to
   the fixed guard prompt scaffolding; the dominant nuisance in raw-metric
   estimation.
+- **Native vs imposed ontology** — the model interprets each case through its
+  own learned organization of the input space (*native* ontology: base
+  pretraining reshaped by the guard fine-tune) before rendering a verdict in
+  the *imposed* ontology (the S-code taxonomy). The two need not coincide,
+  and their alignment is measurable. Post-operative damage stratifies
+  accordingly: **interpretive damage** (the case is misread — the native
+  ontology deformed) vs **classificatory damage** (the case is read
+  correctly but the verdict layer moved). An intervention with good surgical
+  specificity produces the second without the first.
 
 ## 3. Retrospective: primitives already in main, and the concepts they implement
 
@@ -565,8 +574,12 @@ and manifests (not just the selected winner) keyed by dataset digest + commit.
 guard_study (`fit(safe_acts, unsafe_acts, layer) → directions, natural_scale,
 diagnostics`), registry keyed from the study YAML
 (`steering.estimator: mean-diff | ...`); refactor the current mean-diff path
-into estimator #0.
-*Exit gate*: regression identity — estimator #0 reproduces P0 outputs exactly.
+into estimator #0. Alongside the refactor: the inherited-assumptions audit
+(§8) — enumerate every nominal default the guard lane currently inherits
+(positions, winsorization, layer heuristics, corpus shape) and mark each
+validated, replaced, or unvalidated in the study manifest.
+*Exit gate*: regression identity — estimator #0 reproduces P0 outputs
+exactly — plus the audit table committed.
 
 **P2 — Evidence gates.** Implement mxPBF (α set per the consistency bound;
 report sensitivity in {α, 2α}); run per layer and per S-code, in neuron and
@@ -674,6 +687,18 @@ is a battery × dose grid, not one A/B. The battery:
    in place of full-vocab KL — full-vocab KL on a guard mostly measures
    template plumbing; the behavioral fingerprint is the verdict
    distribution. GGUF/llama.cpp A/B lane unchanged from the bench.
+8. *Ontological stratigraphy* — separate interpretive from classificatory
+   damage (§2): (a) quotient-Gram drift (§4.12) restricted to *case*
+   activations — the relational structure of the case space is the model's
+   de facto native ontology, and drift there flags interpretive damage even
+   when verdicts are unchanged; (b) native-vs-imposed alignment: cluster the
+   case activations unsupervised and score agreement with the S-code
+   partition (ARI/NMI) pre and post — a drop localizes damage to
+   interpretation; (c) auxiliary probes: linear probes for verdict-irrelevant
+   case properties (topic, language, speaker role) trained pre-op and
+   evaluated post-op — verdict moves with auxiliary probes intact indicate a
+   verdict-local intervention; degraded probes indicate the op cut into the
+   interpretive substrate.
 
 *Exit gate*: pre/post battery table joined to the winner-arm records; any
 arm advancing to writeup carries its battery row.
@@ -743,6 +768,25 @@ without fooling itself.*
   binary-only scoring) before P10 runs, and report binary and per-category
   results separately. Dataset names in P10 are candidates pending
   availability/licensing checks, not commitments.
+- **Inherited thinking-model assumptions**: the nominal procedures were
+  designed for chat subjects and cross into the guard lane silently. Known
+  suspects, each to be revalidated or replaced before it carries weight
+  here: token-position conventions (chat pipelines collect at instruction-
+  following loci; the guard's decision concentrates at the pre-verdict
+  positions — guard_study's emitted-label alignment is correct, the bench
+  defaults are not); the contrastive prompt corpus (built to *elicit refusal
+  behavior from an instruction-follower* — the guard reads conversations, so
+  corpus design transfers only after reshaping into case form); layer-
+  selection heuristics (knee/COSMIC fusion calibrated on chat refusal depth
+  profiles — P2's measured profiles decide layers here, never inherited
+  heuristics); winsorization constants tuned on chat activation statistics;
+  the `AlignmentImprintDetector` taxonomy (DPO/RLHF/CAI refusal alignment
+  does not describe a supervised classifier fine-tune — its output on the
+  guard is undefined, and the jailbreak-blend α table keyed to it is
+  inapplicable); and KL/capability budget conventions (replaced by P10's
+  verdict-distribution KL and discrimination battery). Rule: any nominal
+  default entering the guard lane is either revalidated against this prep or
+  named in the run manifest as unvalidated.
 - **Geometry shopping**: manifolds are analysis representations, not causal
   surfaces — the model's readout is linear, so interventions stay in the
   residual stream's own coordinates regardless of which geometry describes
