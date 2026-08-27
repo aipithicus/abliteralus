@@ -147,6 +147,21 @@ every run an isolated, atomically allocated, self-describing workdir; the
 surgery-bench run-directory allocation is race-free. Baselines are reproducible
 from a commit plus a dataset digest.
 
+**The ThermoMapper stack** — the product-median machinery of §4.3–4.4 is
+already operational in the lab's own C# codebase
+(`D:\aghado01\ThermoMapper\src\maths\geometry\`): `RiemannianProductManifold`
+(coupled product geometry via concatenated factor logs with full-product IRLS
+weights), `ScaledManifold` (constant metric scaling — licensed by 2601.10992:
+scaling a factor changes distances but not its exp/log maps),
+`ManifoldMedian` (Riemannian Weiszfeld/IRLS), `MoMPCA` (scale-calibrated
+product MoM), `WeiszfeldScatter` (robust tangent scatter with cross-factor
+blocks — the lab's own extension), plus a medoid warm-start that avoids the
+Grassmann cut locus. P4 is therefore a *port*, not a green-field build. This
+also closes the loop Sol's review identified: the merged Grassmann branches
+lacked a production consumer (`informed_pipeline.py` still feeds rank-1
+`quick_directions` to cross-layer analysis) — the estimator seam and the P4
+scorecard are that consumer.
+
 ## 4. Method imports from the You corpus
 
 Corpus: `D:\aghado01\graveyard\codex-scientiae\bibliotecha\corpora\KisungYou`
@@ -212,7 +227,31 @@ the reason stability must be measured, not assumed.
 
 **Role**: robust aggregation for the stability scorecard (§P4) and the
 MoM-robust estimator arm (§P3). Implementable entirely with `grassmann.py`
-primitives plus a Weiszfeld loop (§4.4).
+primitives plus a Weiszfeld loop (§4.4) — and a working reference
+implementation already exists in ThermoMapper (§3, "ThermoMapper stack").
+
+**Two footguns recorded from the companion papers** (via Sol's review, see
+§9): (i) never select the factor weight α by minimizing the median objective
+itself — the objective is concave in α and collapses to an endpoint
+(2605.08001); calibration must be external (the radial rule above, or the
+scatter-based upgrade below). (ii) MoM nodes must be *exchangeable* — prompt
+shards, categories, bootstrap blocks, seeds — never layers, which are ordered
+and non-exchangeable (the P6 cross-layer median is a descriptive robust
+summary over a structured index, not a MoM estimator, and its breakdown
+guarantees are not those of this section).
+
+**Calibration hierarchy** (upgrade path for α): (1) You's scalar α — one
+weight per factor; (2) block-anisotropic — whiten within each factor using a
+robust tangent scatter; (3) fully coupled — invert the complete scatter
+including cross-factor blocks `Σ_μU`, which the MoMPCA paper acknowledges are
+generally nonzero. ThermoMapper's `WeiszfeldScatter` (the lab's own
+contribution) computes exactly the robust tangent scatter that levels (2)–(3)
+need, including the cross-blocks. Discipline: that scatter describes the
+*shape of the tangent cloud* and can whiten, calibrate, and flag anomalies —
+it is **not** the estimator's sandwich covariance
+`V_α = H^{-1/2} A^{-1} S A^{-T} H^{-1/2}` (score covariance + sensitivity),
+is not high-breakdown (linear, unbounded influence), and confidence regions
+come from the node bootstrap or the sandwich, never from the scatter alone.
 
 ### 4.4 Product-manifold geometric median (arXiv:2505.18844)
 
@@ -358,6 +397,22 @@ evidence heatmap and the `WhitenedSVDExtractor` condition-number/effective-
 rank reports. (c) Communicable framing support: distillation transferring
 behavior but not geometry is independent evidence that geometry must be
 interrogated directly — the programme's premise.
+
+### 4.12 Quotient-Gram relational comparison (arXiv:2604.02739)
+
+The centered Gram matrix `B = H X Xᵀ H` of a prompt-indexed activation
+matrix removes translation and hidden-basis rotation while preserving every
+pairwise prompt relation — a quotient representation valid whenever prompt
+identities correspond across the two states being compared.
+
+**Roles**: (a) a P7 companion to the topology metric: **Gram drift** under
+steering measures *relational* deformation of the activation cloud, cheaper
+than persistence and sensitive to different failure modes (Sol's proposed
+composite — effect − λ_G·Gram drift − λ_T·persistence drift — is the shape
+of the eventual collateral covariate). (b) The enabling tool for the
+detection/enforcement arc (§6, "beyond the near term"): quotient
+representations compare guard and chat activations *despite different hidden
+widths*, which raw-coordinate methods cannot.
 
 ## 5. Hypotheses
 
@@ -515,7 +570,11 @@ Expected role: the potency ceiling that the H5 scorecard tests for stability.
 *Exit gate*: ED50 table (arm × sign) with bootstrap CIs → **H2, H3 resolved.**
 
 **P4 — Stability scorecard.** B ≈ 200 bootstrap resamples per estimator;
-Grassmann dispersion about the α̂-calibrated MoM center (4.3–4.4).
+Grassmann dispersion about the α̂-calibrated MoM center (4.3–4.4), ported
+from the ThermoMapper stack (§3) with its medoid warm-start; block-anisotropic
+calibration via the WeiszfeldScatter port is the stretch upgrade, giving the
+lab's own scatter contribution its first consumer. Uncertainty statements via
+node bootstrap (never the scatter alone — §4.3 discipline).
 *Exit gate*: potency × stability Pareto figure → **H5 resolved.**
 
 **P5 — Rank and cone instrument.** Per-S-code directions (categories passing
@@ -530,9 +589,11 @@ arms; cross-layer joint arm as product-manifold Weiszfeld median; depth
 profiles of causal effect vs readout alignment.
 *Exit gate*: **H4 resolved**; rank-k vs rank-1 potency comparison recorded.
 
-**P7 — Topology collateral.** Landscape pipeline on subsampled clouds per
-arm × dose; k-sample energy tests vs sham.
-*Exit gate*: **H6 resolved**; collateral covariate joined to the ED50 table.
+**P7 — Topology and relational collateral.** Landscape pipeline on subsampled
+clouds per arm × dose; k-sample energy tests vs sham; quotient-Gram drift
+(§4.12) computed alongside from the same captures.
+*Exit gate*: **H6 resolved**; collateral covariates (persistence + Gram
+drift) joined to the ED50 table.
 
 **P8 — Hierarchy arm (conditional: opens only if P5 finds K > 1).** Gromov δ
 and matched-dimension distortion comparison on the P5 direction set;
@@ -623,6 +684,16 @@ without fooling itself.*
   *concept* (capacity-ordered progressive reduction with a matched random
   control), not its specific estimator; any "HOPE score" claim waits for the
   SwiGLU kernels.
+- **Manifold-kernel positive-definiteness**: geodesic Gaussian kernels are
+  not generally positive-definite on curved manifolds (2605.03266). Any
+  future MMD or kernel-discrepancy diagnostic over subspaces must use a
+  Gaussian kernel pulled back through the projector embedding, not a
+  geodesic-distance kernel.
+- **Curvature-heuristic quarantine**: `analysis/riemannian_manifold.py`
+  self-declares ambient Euclidean triangle heuristics rather than rigorous
+  curvature estimates. The programme's Grassmann, product-median, and
+  quotient machinery must not route through it; intrinsic computations stay
+  on `grassmann.py` and the ThermoMapper-ported solvers.
 
 ## 9. Assets
 
@@ -633,8 +704,9 @@ without fooling itself.*
 | Geometry primitives | `abliteralus/analysis/` (grassmann, whitened_svd, cross_layer, concept_geometry, steering_vectors, leace, wasserstein_*, spectral_certification) |
 | You corpus (markdown, mdnav-indexed) | `D:\aghado01\graveyard\codex-scientiae\bibliotecha\corpora\KisungYou` |
 | Author implementation clones (R) | `D:\aghado01\codex-scientiae\ingestion\gauntlet\kisungyou` |
-| Prior art (own) | `D:\aghado01\ThermoMapper` |
+| Prior art (own): product-median stack | `D:\aghado01\ThermoMapper\src\maths\geometry\` (ProductManifold, ScaledManifold, ManifoldMedian, MoMPCA, WeiszfeldScatter) |
 | Upstream cone theory + open gaps | [docs/theory_journal.md](../../docs/theory_journal.md) (§2.3–2.5, Part VI) |
+| Sol's independent corpus review | `D:\aipithicus\aipithicus-issues\abliteralus\notes\sol-thermomapper-read-trimmed.md` (and siblings in `notes/`) |
 
 Corpus papers on the critical path: 2112.02580 (mxPBF), 2307.15213
 (centering), 2605.20681 (scale-calibrated MoM), 2505.18844 (product medians),
