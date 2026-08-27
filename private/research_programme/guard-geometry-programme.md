@@ -156,9 +156,16 @@ scaling a factor changes distances but not its exp/log maps),
 `ManifoldMedian` (Riemannian Weiszfeld/IRLS), `MoMPCA` (scale-calibrated
 product MoM), `WeiszfeldScatter` (robust tangent scatter with cross-factor
 blocks — the lab's own extension), plus a medoid warm-start that avoids the
-Grassmann cut locus. P4 is therefore a *port*, not a green-field build. This
-also closes the loop Sol's review identified: the merged Grassmann branches
-lacked a production consumer (`informed_pipeline.py` still feeds rank-1
+Grassmann cut locus. **Transfer mode**: ThermoMapper is C#, so what carries
+over is the *conceptual architecture and the universal implementation
+details* — the manifold interface (exp/log/dist/transport), the product
+coupling (concatenated factor logs, IRLS weights from the full product
+distance), the scaled-manifold wrapper, the damping and warm-start policies —
+reimplemented natively in PyTorch, not translated line-by-line. The PyTorch
+build gains what C# cannot offer: batching, GPU residency, and
+autograd-through-log/exp (which the RDO arm can exploit). This also closes
+the loop Sol's review identified: the merged Grassmann branches lacked a
+production consumer (`informed_pipeline.py` still feeds rank-1
 `quick_directions` to cross-layer analysis) — the estimator seam and the P4
 scorecard are that consumer.
 
@@ -569,13 +576,25 @@ makes this cleaner than any chat prep (no behavioral judge in the loop).
 Expected role: the potency ceiling that the H5 scorecard tests for stability.
 *Exit gate*: ED50 table (arm × sign) with bootstrap CIs → **H2, H3 resolved.**
 
-**P4 — Stability scorecard.** B ≈ 200 bootstrap resamples per estimator;
-Grassmann dispersion about the α̂-calibrated MoM center (4.3–4.4), ported
-from the ThermoMapper stack (§3) with its medoid warm-start; block-anisotropic
-calibration via the WeiszfeldScatter port is the stretch upgrade, giving the
-lab's own scatter contribution its first consumer. Uncertainty statements via
-node bootstrap (never the scatter alone — §4.3 discipline).
-*Exit gate*: potency × stability Pareto figure → **H5 resolved.**
+**P4 — Stability scorecard + the manifold core.** The infrastructure half:
+build `analysis/manifolds` as a small PyTorch-native core — manifold
+interface, product manifold with correct coupling, scaled wrapper, damped
+Weiszfeld median with medoid warm-start, tangent scatter, MoM aggregation —
+with ThermoMapper as the semantic reference (§3, conceptual transfer, not a
+port). The science half: B ≈ 200 bootstrap resamples per estimator; Grassmann
+dispersion about the α̂-calibrated MoM center (4.3–4.4); block-anisotropic
+calibration via the reimplemented WeiszfeldScatter is the stretch upgrade,
+giving the lab's own scatter contribution its first consumer. Uncertainty
+statements via node bootstrap (never the scatter alone — §4.3 discipline).
+This core is also where `riemannian_manifold.py` gets its overhaul (see §8):
+the module's self-documented Euclidean triangle heuristic is retired in favor
+of the two estimators its own docstring already names — local-PCA
+second-fundamental-form fits, and the pullback metric `G = JᵀJ` through the
+verdict readout, which the guard prep makes nearly free (1B model, two-token
+logit map). The upgraded module, with tests, is a natural upstream
+OBLITERATUS contribution alongside the manifold core itself.
+*Exit gate*: potency × stability Pareto figure → **H5 resolved**; manifold
+core landed with the heuristic path deleted, not deprecated.
 
 **P5 — Rank and cone instrument.** Per-S-code directions (categories passing
 the P2 gate); sign canonicalization; singular spectrum + SN-mixture BIC scan;
@@ -689,11 +708,16 @@ without fooling itself.*
   future MMD or kernel-discrepancy diagnostic over subspaces must use a
   Gaussian kernel pulled back through the projector embedding, not a
   geodesic-distance kernel.
-- **Curvature-heuristic quarantine**: `analysis/riemannian_manifold.py`
-  self-declares ambient Euclidean triangle heuristics rather than rigorous
-  curvature estimates. The programme's Grassmann, product-median, and
-  quotient machinery must not route through it; intrinsic computations stay
-  on `grassmann.py` and the ThermoMapper-ported solvers.
+- **Curvature-heuristic interim boundary (upgrade scheduled)**:
+  `analysis/riemannian_manifold.py`'s triangle angle-excess estimator
+  measures Euclidean chords and — as its own comments state — returns K ≈ 0
+  regardless of true manifold curvature; it was a first attempt, not a
+  method. Until the P4 manifold core replaces it (local-PCA second
+  fundamental form + Jacobian pullback metric), no programme result may
+  depend on its curvature numbers; after P4, the heuristic path is deleted
+  rather than kept as a fallback. The module's *interfaces and framing*
+  (pullback metric, geodesic projection, intrinsic dimension) are sound and
+  are the skeleton the upgrade fills in.
 
 ## 9. Assets
 
