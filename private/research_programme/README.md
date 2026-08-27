@@ -6,8 +6,10 @@ trajectories, method imports, and communication plans. Distinct from
 are revised in place as programmes evolve; run-level facts belong in the
 journal and in run manifests.
 
-- [The Geometry of a Verdict](guard-geometry-programme.md) — directional
-  structure of Llama Guard 3 1B as a methods testbed: six falsifiable
-  hypotheses (H1–H6), an eight-phase trajectory (P0–P7), estimator imports
-  from the Kisung You corpus, and a retrospective mapping of the Grassmann /
-  whitened-SVD primitives already merged into main.
+- [The Geometry of a Verdict](guard-geometry-programme.md) (codename
+  **c-elegans**) — directional structure of Llama Guard 3 1B as a methods
+  testbed: eight falsifiable hypotheses (H1–H8), an eleven-phase trajectory
+  (P0–P10) ending in a post-operative behavioral battery, method imports
+  from the Kisung You corpus plus HOPE and embedding-condensation, and a
+  retrospective mapping of the Grassmann / whitened-SVD / ThermoMapper
+  primitives onto their roles as measurement instruments.

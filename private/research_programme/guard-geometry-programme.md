@@ -1,10 +1,16 @@
 # The Geometry of a Verdict: a research programme on directional structure in a generative safety classifier
 
-Status: draft v0.1 — 2026-08-26. Scope: near-term (weeks, not quarters). Prep:
-Llama Guard 3 1B via `private/guard_study`. This document is the working
-specification for the methods-testbed phase; the study YAMLs under
-`experiments/studies/` and the guard_study contracts remain the operational
-source of truth for any individual run.
+Codename: **c-elegans** — the model organism whose connectome is fully
+mapped; the ambition in one word.
+
+Status: draft v0.2 — 2026-08-27 (v0.1 2026-08-26). Scope: near-term (weeks,
+not quarters). Prep: Llama Guard 3 1B via `private/guard_study`. This
+document is the working specification for the methods-testbed phase; the
+study YAMLs under `experiments/studies/` and the guard_study contracts remain
+the operational source of truth for any individual run. Programme state:
+H1–H8, P0–P10, ten deliverable figures; **P0 (baseline freeze) has not yet
+executed** — the working tree is uncommitted and nothing downstream starts
+until it lands.
 
 ---
 
@@ -444,7 +450,9 @@ widths*, which raw-coordinate methods cannot.
 Each hypothesis states its measurand, prediction, and falsifier. Both outcomes
 are interpretable; none is decorative.
 
-**H1 — Verdict rank and cone structure.** The verdict is not rank-1: per-S-code
+### H1 — Verdict rank and cone structure
+
+The verdict is not rank-1: per-S-code
 whitened difference directions span a subspace with effective rank > 1,
 organized as a **polyhedral cone** — category detectors sharing a common
 half-space around a shared axis — mirroring the upstream chat-refusal finding
@@ -466,7 +474,9 @@ half-space test fails — category detectors are genuinely antagonistic rather
 than cone-structured, which would itself contradict the upstream polyhedral
 picture and be worth reporting loudly.
 
-**H2 — Dose asymmetry.** Inducing "unsafe" is easier than suppressing it:
+### H2 — Dose asymmetry
+
+Inducing "unsafe" is easier than suppressing it:
 ED50(+) < ED50(−) on matched cases.
 *Measurand*: signed ED50s from the existing dose grid, bootstrap CIs.
 *Prediction*: strict inequality, outside overlapping CIs.
@@ -475,7 +485,9 @@ reversal (the "default-on safe prior" picture is wrong).
 *Note*: partially answerable from already-collected pilot tables before any
 new code.
 
-**H3 — Whitening potency.** Two stacked nuisances dominate the raw metric at
+### H3 — Whitening potency
+
+Two stacked nuisances dominate the raw metric at
 this scale — the size-dependent condensation cone (§4.11) and the template
 covariance — so the whitened estimator finds a more causally aligned axis:
 ED50(whitened) < ED50(raw mean-diff), sham-normalized, both signs.
@@ -489,7 +501,9 @@ surprising one).
 model size, whitening's advantage should shrink on larger guard variants — a
 directional prediction recorded now for any future multi-scale run.
 
-**H4 — Computation upstream of transcription.** There exist layers where
+### H4 — Computation upstream of transcription
+
+There exist layers where
 causal patching moves the verdict but readout-axis alignment is low.
 *Measurand*: depth profiles of (a) patched-margin causal effect, (b)
 whitened cosine between layer direction and the unembedding difference axis.
@@ -498,7 +512,9 @@ whitened cosine between layer direction and the unembedding difference axis.
 "steering" is just writing the answer; interventional claims must then be
 reframed as readout manipulation.
 
-**H5 — Potency–stability Pareto.** Whitened and MoM-robust estimators
+### H5 — Potency–stability Pareto
+
+Whitened and MoM-robust estimators
 dominate raw mean-diff on the joint (potency, stability) front; stability
 degrades with spectrum flatness as the eigengap theory predicts.
 *Measurand*: per estimator, ED50 vs Grassmann dispersion (median geodesic
@@ -507,7 +523,9 @@ distance of resample fits to their MoM center, normalized by
 *Falsifier*: raw mean-diff on the front — the sophistication does not pay for
 itself at this scale, an important negative result for the methods paper.
 
-**H6 — Translation, not tearing.** At doses up to ED50, steering translates
+### H6 — Translation, not tearing
+
+At doses up to ED50, steering translates
 the activation cloud without changing its topology relative to sham.
 *Measurand*: k-sample energy statistic on persistence landscapes across doses
 vs sham, permutation p-values.
@@ -517,7 +535,9 @@ flip; significance only at the grid extremes (±2σ).
 destruction, and every potency number in H2–H5 must be reinterpreted with a
 collateral-damage covariate.
 
-**H7 — Verdict hierarchy (conditional on H1: K > 1).** The category detectors
+### H7 — Verdict hierarchy (conditional on H1: K > 1)
+
+The category detectors
 are not flat siblings: the direction set is tree-like — a shared "unsafe"
 parent with S-code children — and is therefore better represented in
 hyperbolic than in spherical or Euclidean geometry, with the radial coordinate
@@ -537,7 +557,9 @@ dropped from the writeup.
 likelihood across manifolds (different sample spaces); the norm→radius map is
 fixed before fitting (see §8).
 
-**H8 — The verdict is core, not slack.** Because the verdict is the guard's
+### H8 — The verdict is core, not slack
+
+Because the verdict is the guard's
 trained task, its machinery should be among the *last* structure destroyed by
 capacity-ordered progressive compression — in sharp contrast to chat-model
 safety behavior, which is empirically shallow and dies early under
@@ -565,12 +587,16 @@ Phases are ordered so that every method arm consumes the same frozen inputs
 and every claim has its control before its effect. Compute is not the
 bottleneck at 1B; implementation discipline is.
 
-**P0 — Freeze the baseline.** Commit the working tree (sliced); run the pilot
+### P0 — Freeze the baseline
+
+Commit the working tree (sliced); run the pilot
 study as-is on main; archive the complete dose–response tables, causal map,
 and manifests (not just the selected winner) keyed by dataset digest + commit.
 *Exit gate*: a second run from the same commit reproduces the archived tables.
 
-**P1 — Open the estimator seam.** `DirectionEstimator` protocol in
+### P1 — Open the estimator seam
+
+`DirectionEstimator` protocol in
 guard_study (`fit(safe_acts, unsafe_acts, layer) → directions, natural_scale,
 diagnostics`), registry keyed from the study YAML
 (`steering.estimator: mean-diff | ...`); refactor the current mean-diff path
@@ -581,7 +607,9 @@ validated, replaced, or unvalidated in the study manifest.
 *Exit gate*: regression identity — estimator #0 reproduces P0 outputs
 exactly — plus the audit table committed.
 
-**P2 — Evidence gates.** Implement mxPBF (α set per the consistency bound;
+### P2 — Evidence gates
+
+Implement mxPBF (α set per the consistency bound;
 report sensitivity in {α, 2α}); run per layer and per S-code, in neuron and
 whitened bases. Alongside, the condensation profile (§4.11): layer-wise
 pairwise-cosine distributions with the Spearman-ρ depth summary — near-free
@@ -589,7 +617,9 @@ from the same activation captures.
 *Exit gate*: layer × category evidence heatmap + condensation profile; layer
 set for P3 chosen from them (with the causal map), not by convention.
 
-**P3 — Estimator arms.** Centering variants (4.2 taxonomy), whitened-SVD
+### P3 — Estimator arms
+
+Centering variants (4.2 taxonomy), whitened-SVD
 (existing extractor behind the protocol), MoM-robust (block medians over
 prompt blocks). Full dose grids with matched shams. Reserve arm: RDO-style
 gradient search (the theory journal's §2.3 recommendation) — directly
@@ -598,7 +628,9 @@ makes this cleaner than any chat prep (no behavioral judge in the loop).
 Expected role: the potency ceiling that the H5 scorecard tests for stability.
 *Exit gate*: ED50 table (arm × sign) with bootstrap CIs → **H2, H3 resolved.**
 
-**P4 — Stability scorecard + the manifold core.** The infrastructure half:
+### P4 — Stability scorecard + the manifold core
+
+The infrastructure half:
 build `analysis/manifolds` as a small PyTorch-native core — manifold
 interface, product manifold with correct coupling, scaled wrapper, damped
 Weiszfeld median with medoid warm-start, tangent scatter, MoM aggregation —
@@ -618,33 +650,43 @@ OBLITERATUS contribution alongside the manifold core itself.
 *Exit gate*: potency × stability Pareto figure → **H5 resolved**; manifold
 core landed with the heuristic path deleted, not deprecated.
 
-**P5 — Rank and cone instrument.** Per-S-code directions (categories passing
+### P5 — Rank and cone instrument
+
+Per-S-code directions (categories passing
 the P2 gate); sign canonicalization; singular spectrum + SN-mixture BIC scan;
 DSI per category and the half-space test via `ConceptConeAnalyzer`, with its
 polyhedral threshold calibrated against the S-code ground truth.
 *Exit gate*: verdict-rank + cone-structure estimate with certification level
 → **H1 resolved**; decision point: K > 1 authorizes P6's rank-k arms.
 
-**P6 — Subspace arms and depth profiles.** Rank-k projection and steering
+### P6 — Subspace arms and depth profiles
+
+Rank-k projection and steering
 arms; cross-layer joint arm as product-manifold Weiszfeld median; depth
 profiles of causal effect vs readout alignment.
 *Exit gate*: **H4 resolved**; rank-k vs rank-1 potency comparison recorded.
 
-**P7 — Topology and relational collateral.** Landscape pipeline on subsampled
+### P7 — Topology and relational collateral
+
+Landscape pipeline on subsampled
 clouds per arm × dose; k-sample energy tests vs sham; quotient-Gram drift
 (§4.12) computed alongside from the same captures.
 *Exit gate*: **H6 resolved**; collateral covariates (persistence + Gram
 drift) joined to the ED50 table.
 
-**P8 — Hierarchy arm (conditional: opens only if P5 finds K > 1).** Gromov δ
+### P8 — Hierarchy arm (conditional: opens only if P5 finds K > 1)
+
+Gromov δ
 and matched-dimension distortion comparison on the P5 direction set;
 hyperboloid-model embedding with a pre-registered norm→radius map; Riemannian
 Gaussian mixture fits (§4.8) with profile-likelihood inference (§4.9);
 Poincaré-disk projection for the figure only.
 *Exit gate*: **H7 resolved**; δ/distortion table + verdict-map figure.
 
-**P9 — Compression trajectory (independent of P8; needs P5 outputs for the
-core-alignment analysis only).** Capacity-ordered progressive ablation via
+### P9 — Compression trajectory (independent of P8)
+
+Needs P5 outputs for the core-alignment analysis only.
+Capacity-ordered progressive ablation via
 existing surgery-bench strategies with a random-order control at matched
 parameter counts; margin/parse tracking per step; overlap analysis between
 the surviving core and the verdict subspace. HOPE-proper (SwiGLU kernels,
@@ -652,11 +694,10 @@ merging, consolidation control for H1) is a stretch goal behind the same
 interface, not a gate.
 *Exit gate*: **H8 resolved**; margin-vs-capacity trajectory figure.
 
-Retrospective analyses of P0 pilot data (notably H2) may be reported as soon
-as available; they do not wait for the phase ladder.
+### P10 — Post-operative interrogation
 
-**P10 — Post-operative interrogation (behavioral battery; runs on P3+ winner
-arms at selected doses, and on any mirror-lane weight surgery).** The nominal
+Behavioral battery; runs on P3+ winner arms at selected doses, and on any
+mirror-lane weight surgery. The nominal
 subject's post-op battery — judge-mediated refusal rates, full-vocab KL
 budgets, broad capability benchmarks — inverts on the guard in four ways:
 the primary behavior is machine-parseable (no judge, exact confusion
@@ -700,8 +741,16 @@ is a battery × dose grid, not one A/B. The battery:
    verdict-local intervention; degraded probes indicate the op cut into the
    interpretive substrate.
 
-*Exit gate*: pre/post battery table joined to the winner-arm records; any
-arm advancing to writeup carries its battery row.
+Items 1–3 are the **minimal core** (every winner arm runs them); items 4–8
+are the extended battery, run on the final reported arms so battery cost
+never gates iteration.
+*Exit gate*: pre/post minimal-core table joined to the winner-arm records;
+any arm advancing to writeup carries its full battery row.
+
+### Trajectory notes
+
+Retrospective analyses of P0 pilot data (notably H2) may be reported as soon
+as available; they do not wait for the phase ladder.
 
 *Beyond the near term*: with guard category cones established as pure
 detection geometry, comparing them against a chat model's refusal cones (via
