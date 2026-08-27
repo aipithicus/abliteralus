@@ -171,16 +171,42 @@ model; in this programme the same species is the *patient*. Post-operative
 interrogation of the guard therefore needs no new parser and no LLM judge —
 the primary behavior is machine-verifiable by construction (P10).
 
-**The ThermoMapper stack** — the product-median machinery of §4.3–4.4 is
-already operational in the lab's own C# codebase
-(`D:\aghado01\ThermoMapper\src\maths\geometry\`): `RiemannianProductManifold`
-(coupled product geometry via concatenated factor logs with full-product IRLS
-weights), `ScaledManifold` (constant metric scaling — licensed by 2601.10992:
-scaling a factor changes distances but not its exp/log maps),
-`ManifoldMedian` (Riemannian Weiszfeld/IRLS), `MoMPCA` (scale-calibrated
-product MoM), `WeiszfeldScatter` (robust tangent scatter with cross-factor
-blocks — the lab's own extension), plus a medoid warm-start that avoids the
-Grassmann cut locus. **Transfer mode**: ThermoMapper is C#, so what carries
+**The ThermoMapper stack** — far larger than first inventoried (snapshot:
+`D:\aghado01\ThermoMapper\src\.snapshot\20260827_014057\`, a sharded source
+manifest read by byte-range seek, never grepped whole). The lab's own C#
+codebase holds working semantic references for most of the programme's
+instrument plan:
+
+- *Product-median core* (§4.3–4.4): `RiemannianProductManifold` (coupled
+  product geometry — concatenated factor logs, full-product IRLS weights),
+  `ScaledManifold` (constant metric scaling per 2601.10992), `ManifoldMedian`
+  (damped Weiszfeld/IRLS with `IRobustLoss`), `MoMPCA`, `WeiszfeldScatter` +
+  `KarcherScatter` + `ConsistencyFactors`, medoid warm-start off the
+  Grassmann cut locus.
+- *The full manifold zoo*: `GrassmannManifold`, `StiefelManifold`,
+  `SphericalManifold`, `LorentzHyperboloidManifold`, `PoincareBallManifold`,
+  `EuclideanVectorManifold` behind one `IRiemannianManifold` interface — the
+  P5 (sphere) and P8 (hyperboloid/Poincaré) arms have reference geometry
+  in-house, plus Fisher–Rao and Wasserstein-1 geodesic metrics.
+- *`MxPbf.cs`* — a faithful implementation of §4.1's mxPBF (verified against
+  the 2112.02580 closed form), including a `TwoSampleCovariance` variant the
+  programme hadn't planned. P2's gate has a validated reference. Caveat: its
+  default `alpha = 2.0` sits at the consistency boundary — the P2 spec's
+  bound-derived α governs, not the inherited default.
+- *`SubspaceAnnealer`* — Grassmann simulated annealing over arbitrary
+  subspace objectives (PCA warm-start, geodesic + paired-rotation moves):
+  the optimizer skeleton for the P3 RDO arm, and the engine behind
+  ThermoMapper's end-to-end **SPRED** implementation
+  (`Spred`/`DistributedSpred` + `PersistenceObjective`) — You's 2106.02096
+  realized, with a serious in-house persistent-homology engine
+  (Rips/zigzag/cohomology, `DiagramMetrics`) as P7's semantic reference.
+- *Cluster-agreement metrics*: `AdjustedRandIndex`, NMI, V-measure,
+  homogeneity/completeness — P10's ontological-stratigraphy scoring,
+  reference-implemented. `BicKSweep` is the P5 model-selection pattern.
+- *Synthetic ground truth*: `HyperbolicHierarchy`, `HyperbolicBlobs`,
+  `GaussianManifold`, anisotropic/hierarchical Euclidean generators — the
+  validation suite every instrument runs against before touching guard data
+  (see §6). **Transfer mode**: ThermoMapper is C#, so what carries
 over is the *conceptual architecture and the universal implementation
 details* — the manifold interface (exp/log/dist/transport), the product
 coupling (concatenated factor logs, IRLS weights from the full product
@@ -585,7 +611,12 @@ communicable figure the lab's surgery machinery can produce.
 
 Phases are ordered so that every method arm consumes the same frozen inputs
 and every claim has its control before its effect. Compute is not the
-bottleneck at 1B; implementation discipline is.
+bottleneck at 1B; implementation discipline is. Standing rule: **instruments
+validate on synthetic ground truth before touching guard activations** —
+mixture recovery on the sphere, tree detection in hyperbolic space, subspace
+recovery under contamination all have known-answer generators (ThermoMapper's
+synthetic suite is the semantic reference), and an instrument that cannot
+recover planted structure has no business reporting discovered structure.
 
 ### P0 — Freeze the baseline
 
@@ -611,7 +642,10 @@ exactly — plus the audit table committed.
 
 Implement mxPBF (α set per the consistency bound;
 report sensitivity in {α, 2α}); run per layer and per S-code, in neuron and
-whitened bases. Alongside, the condensation profile (§4.11): layer-wise
+whitened bases. Reference implementation: ThermoMapper `MxPbf.cs` (§3),
+including the covariance-test variant — worth adding as a second gate
+(class-conditional covariance *difference* is itself evidence of structure
+the mean test misses). Alongside, the condensation profile (§4.11): layer-wise
 pairwise-cosine distributions with the Spearman-ρ depth summary — near-free
 from the same activation captures.
 *Exit gate*: layer × category evidence heatmap + condensation profile; layer
@@ -626,6 +660,9 @@ gradient search (the theory journal's §2.3 recommendation) — directly
 optimize the direction against the differentiable logit margin; the guard
 makes this cleaner than any chat prep (no behavioral judge in the loop).
 Expected role: the potency ceiling that the H5 scorecard tests for stability.
+Optimizer skeleton: ThermoMapper's `SubspaceAnnealer` (Grassmann annealing
+over arbitrary objectives) for the derivative-free form; autograd through
+the margin for the differentiable form.
 *Exit gate*: ED50 table (arm × sign) with bootstrap CIs → **H2, H3 resolved.**
 
 ### P4 — Stability scorecard + the manifold core
@@ -875,7 +912,8 @@ without fooling itself.*
 | Geometry primitives | `abliteralus/analysis/` (grassmann, whitened_svd, cross_layer, concept_geometry, steering_vectors, leace, wasserstein_*, spectral_certification) |
 | You corpus (markdown, mdnav-indexed) | `D:\aghado01\graveyard\codex-scientiae\bibliotecha\corpora\KisungYou` |
 | Author implementation clones (R) | `D:\aghado01\codex-scientiae\ingestion\gauntlet\kisungyou` |
-| Prior art (own): product-median stack | `D:\aghado01\ThermoMapper\src\maths\geometry\` (ProductManifold, ScaledManifold, ManifoldMedian, MoMPCA, WeiszfeldScatter) |
+| Prior art (own): manifold/inference/TDA stack | `D:\aghado01\ThermoMapper\src\` (see §3 inventory) |
+| ThermoMapper source snapshot (sharded; seek by byte range) | `D:\aghado01\ThermoMapper\src\.snapshot\20260827_014057\src_tree.md` |
 | Upstream cone theory + open gaps | [docs/theory_journal.md](../../docs/theory_journal.md) (§2.3–2.5, Part VI) |
 | Sol's independent corpus review | `D:\aipithicus\aipithicus-issues\abliteralus\notes\sol-thermomapper-read-trimmed.md` (and siblings in `notes/`) |
 
