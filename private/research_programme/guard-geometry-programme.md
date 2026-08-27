@@ -203,10 +203,11 @@ instrument plan:
 - *Cluster-agreement metrics*: `AdjustedRandIndex`, NMI, V-measure,
   homogeneity/completeness — P10's ontological-stratigraphy scoring,
   reference-implemented. `BicKSweep` is the P5 model-selection pattern.
-- *Synthetic ground truth*: `HyperbolicHierarchy`, `HyperbolicBlobs`,
-  `GaussianManifold`, anisotropic/hierarchical Euclidean generators — the
-  validation suite every instrument runs against before touching guard data
-  (see §6). **Transfer mode**: ThermoMapper is C#, so what carries
+- *Synthetic generators* (`HyperbolicHierarchy`, `HyperbolicBlobs`,
+  `GaussianManifold`, …): second-line debugging aids only — they reflect
+  ThermoMapper's more academic charter. c-elegans validates instruments on
+  germane fixtures built from its own activations (§6); these generators
+  come out when a failed fixture needs the math isolated from the data. **Transfer mode**: ThermoMapper is C#, so what carries
 over is the *conceptual architecture and the universal implementation
 details* — the manifold interface (exp/log/dist/transport), the product
 coupling (concatenated factor logs, IRLS weights from the full product
@@ -611,12 +612,26 @@ communicable figure the lab's surgery machinery can produce.
 
 Phases are ordered so that every method arm consumes the same frozen inputs
 and every claim has its control before its effect. Compute is not the
-bottleneck at 1B; implementation discipline is. Standing rule: **instruments
-validate on synthetic ground truth before touching guard activations** —
-mixture recovery on the sphere, tree detection in hyperbolic space, subspace
-recovery under contamination all have known-answer generators (ThermoMapper's
-synthetic suite is the semantic reference), and an instrument that cannot
-recover planted structure has no business reporting discovered structure.
+bottleneck at 1B; implementation discipline is. Standing rule, kept lean:
+**an instrument's discoveries count only after it recovers planted structure
+— and the fixtures are built from the prep's own materials**, not an academic
+generator suite:
+
+- *Planted direction*: inject a known synthetic direction at known effect
+  size into real guard activations (actual template covariance and
+  condensation cone as the nuisance field) → estimators must recover it.
+- *Planted intervention*: steer with a known direction at a known dose, hand
+  the activations to the causal instruments blind → they must find it.
+- *Planted cone / hierarchy*: plant k directions with a known shared
+  half-space (or a two-level tree) in real covariance → P5/P8 instruments
+  must report the right K, cone, and depth.
+- *Contaminated blocks*: corrupt a known fraction of bootstrap blocks →
+  the product median must hold where the Karcher mean breaks.
+
+Each fixture is a few dozen lines against P0 activations and doubles as the
+instrument's regression test. ThermoMapper's synthetic generator suite stays
+second-line: a debugging aid when an instrument fails a germane fixture and
+the math needs isolating from the data — not a validation ceremony.
 
 ### P0 — Freeze the baseline
 
