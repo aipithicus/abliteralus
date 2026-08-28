@@ -4,11 +4,15 @@
 immutable research entries without importing ABLITERALUS, Lightning, Hugging Face, or any sharing
 backend. The lab bench supplies those domain relations at its own boundary.
 
-The store uses compact canonical UTF-8 JSON, one LF-terminated object per line, a cross-process
-write lease, durable append (`flush`/`fsync` semantics), UUID journal and entry identities, and a
-SHA-256 record chain. Verification is strict: malformed, non-canonical, unterminated, reordered, or
-hash-invalid records make later append fail closed. `repair` is preview-first; applying it preserves
-the complete original as a timestamped `.bak` before removing the invalid suffix.
+`ResearchJournal` composes exactly one `JsonlStore` from the shared `aipithicus-jsonl-engine`.
+That object owns compact canonical UTF-8 JSON, one LF-terminated object per line, the normalized
+data path, cross-process write lease, durable in-place append, physical repair, one
+`<journal>.transactions.jsonl` commit table, and the adjacent incrementally maintained JSOI v2
+`{stem}.jidx`. The journal layer owns only its schema, privacy checks, UUID identities, SHA-256
+chain, and domain queries. Verification is strict: malformed, non-canonical, unterminated,
+reordered, or hash-invalid records make later append fail closed. `repair` is preview-first;
+applying it asks `JsonlStore` to preserve the complete original as a timestamped `.bak`, publish
+the valid prefix, and immediately rebuild transaction and JIDX state.
 
 The first line is a `research-journal/header`; later lines are `research-journal/entry` records.
 The portable JSON Schema is shipped as `schemas/journal-record-v1.schema.json`.

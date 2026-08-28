@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aipithicus.org/schemas/jsonl-engine/transaction-v1",
+  "title": "Aipithicus JSONL engine transaction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "transaction_id",
+    "generation",
+    "committed_at",
+    "previous_transaction_hash",
+    "start_offset",
+    "end_offset",
+    "start_record_count",
+    "appended_records",
+    "record_count",
+    "data_hash",
+    "jidx_version",
+    "jidx_bytes",
+    "jidx_hash",
+    "source_mtime_ns",
+    "partition",
+    "metadata",
+    "transaction_hash"
+  ],
+  "properties": {
+    "schema": {
+      "const": "https://aipithicus.org/schemas/jsonl-engine/transaction-v1"
+    },
+    "kind": {"enum": ["checkpoint", "append"]},
+    "transaction_id": {"type": "string", "format": "uuid"},
+    "generation": {"type": "integer", "minimum": 0},
+    "committed_at": {"type": "string", "format": "date-time"},
+    "previous_transaction_hash": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      ]
+    },
+    "start_offset": {"type": "integer", "minimum": 0},
+    "end_offset": {"type": "integer", "minimum": 0},
+    "start_record_count": {"type": "integer", "minimum": 0},
+    "appended_records": {"type": "integer", "minimum": 0},
+    "record_count": {"type": "integer", "minimum": 0},
+    "data_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "jidx_version": {"const": 2},
+    "jidx_bytes": {"type": "integer", "minimum": 28},
+    "jidx_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "source_mtime_ns": {
+      "oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]
+    },
+    "partition": {
+      "oneOf": [{"type": "null"}, {"type": "object"}]
+    },
+    "metadata": {"type": "object"},
+    "transaction_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

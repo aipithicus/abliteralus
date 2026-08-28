@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import json
 import math
-import os
 import re
-import tempfile
 import unicodedata
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from filelock import FileLock, Timeout
+from jsonl_engine import (
+    JsonlCorruptionError,
+    JsonlFormatError,
+    JsonlStore,
+    TransactionState,
+    UncommittedTailError,
+)
 
 from .canonical import calculate_record_hash, encode_record
 from .errors import JournalCorruptionError, JournalFormatError
@@ -28,6 +30,7 @@ ENTRY_RECORD_TYPE = "research-journal/entry"
 SHARING_STATES = frozenset({"private", "candidate", "approved"})
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_BODY_CHARACTERS = 64 * 1024
+_ENGINE_METADATA_KEY = "research-journal/v1"
 
 _NAME = re.compile(r"^[a-z][a-z0-9._/-]{0,79}$")
 _TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$")
@@ -157,15 +160,66 @@ class _Scan:
     records: tuple[dict[str, Any], ...]
 
 
+def _journal_head_from_transaction(
+    state: TransactionState,
+) -> tuple[str, str, int] | None:
+    """Return the journal cursor recorded by a committed engine transaction."""
+
+    if state.record_count == 0:
+        return None
+    raw = state.metadata.get(_ENGINE_METADATA_KEY)
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "journal_id",
+        "head_hash",
+        "entry_count",
+    }:
+        return None
+    try:
+        journal_id = _normalize_uuid(raw.get("journal_id"), "transaction journal_id")
+    except JournalFormatError:
+        return None
+    head_hash = raw.get("head_hash")
+    if not isinstance(head_hash, str) or _HASH.fullmatch(head_hash) is None:
+        return None
+    entry_count = raw.get("entry_count")
+    if (
+        isinstance(entry_count, bool)
+        or not isinstance(entry_count, int)
+        or entry_count < 0
+        or state.record_count != entry_count + 1
+    ):
+        return None
+    return journal_id, head_hash, entry_count
+
+
 class ResearchJournal:
-    """One cross-process serialized, hash-chained JSONL research journal."""
+    """Journal-domain rules composed over one authoritative :class:`JsonlStore`."""
 
     def __init__(self, path: str | Path, *, lock_timeout: float = 30.0) -> None:
-        if not math.isfinite(lock_timeout) or lock_timeout <= 0:
-            raise ValueError("lock_timeout must be a positive finite number")
-        self.path = Path(os.path.abspath(Path(path).expanduser()))
-        self.lock_path = self.path.with_name(f"{self.path.name}.lock")
-        self.lock_timeout = lock_timeout
+        self.store = JsonlStore(
+            path,
+            lock_timeout=lock_timeout,
+            maximum_record_bytes=MAX_RECORD_BYTES,
+            recover_uncommitted=False,
+        )
+
+    @property
+    def path(self) -> Path:
+        """Return the path owned and normalized by the physical store."""
+
+        return self.store.path
+
+    @property
+    def lock_path(self) -> Path:
+        """Return the cross-process lease path owned by the physical store."""
+
+        return self.store.lock_path
+
+    @property
+    def lock_timeout(self) -> float:
+        """Return the lease timeout configured on the physical store."""
+
+        return self.store.lock_timeout
 
     def append(
         self,
@@ -191,56 +245,73 @@ class ResearchJournal:
             data=data,
             sharing=sharing,
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lease():
-            scan = self._scan_unlocked(collect_records=False)
-            if not scan.inspection.valid:
-                raise JournalCorruptionError(_append_refusal(scan.inspection))
+        try:
+            with self.store.transaction() as transaction:
+                state = transaction.state
+                cached = _journal_head_from_transaction(state)
+                if cached is None:
+                    scan = self._scan(collect_records=False)
+                    if not scan.inspection.valid:
+                        raise JournalCorruptionError(_append_refusal(scan.inspection))
+                    journal_id = scan.inspection.journal_id
+                    previous_hash = scan.inspection.head_hash
+                    entry_count = scan.inspection.entry_count
+                    initialized = scan.inspection.initialized
+                else:
+                    journal_id, previous_hash, entry_count = cached
+                    initialized = True
 
-            pending: list[bytes] = []
-            journal_id = scan.inspection.journal_id
-            previous_hash = scan.inspection.head_hash
-            if not scan.inspection.initialized:
-                journal_id = str(uuid.uuid4())
-                header = _signed_record(
-                    {
-                        "schema": SCHEMA_ID,
-                        "schema_version": SCHEMA_VERSION,
-                        "record_type": HEADER_RECORD_TYPE,
-                        "journal_id": journal_id,
-                        "created_at": _utc_now(),
-                        "previous_hash": None,
-                    }
-                )
-                pending.append(encode_record(header))
-                previous_hash = header["record_hash"]
+                pending: list[dict[str, Any]] = []
+                if not initialized:
+                    journal_id = str(uuid.uuid4())
+                    header = _signed_record(
+                        {
+                            "schema": SCHEMA_ID,
+                            "schema_version": SCHEMA_VERSION,
+                            "record_type": HEADER_RECORD_TYPE,
+                            "journal_id": journal_id,
+                            "created_at": _utc_now(),
+                            "previous_hash": None,
+                        }
+                    )
+                    pending.append(header)
+                    previous_hash = header["record_hash"]
 
-            assert journal_id is not None
-            entry: dict[str, Any] = {
-                "schema": SCHEMA_ID,
-                "schema_version": SCHEMA_VERSION,
-                "record_type": ENTRY_RECORD_TYPE,
-                "journal_id": journal_id,
-                "entry_id": str(uuid.uuid4()),
-                "recorded_at": _utc_now(),
-                **normalized,
-                "previous_hash": previous_hash,
-            }
-            entry = _signed_record(entry)
-            encoded = encode_record(entry)
-            if len(encoded) > MAX_RECORD_BYTES:
-                raise JournalFormatError(f"encoded journal entry exceeds {MAX_RECORD_BYTES} bytes")
-            pending.append(encoded)
-            _append_durable(self.path, b"".join(pending))
-            return entry
+                assert journal_id is not None
+                entry: dict[str, Any] = {
+                    "schema": SCHEMA_ID,
+                    "schema_version": SCHEMA_VERSION,
+                    "record_type": ENTRY_RECORD_TYPE,
+                    "journal_id": journal_id,
+                    "entry_id": str(uuid.uuid4()),
+                    "recorded_at": _utc_now(),
+                    **normalized,
+                    "previous_hash": previous_hash,
+                }
+                entry = _signed_record(entry)
+                if len(encode_record(entry)) > MAX_RECORD_BYTES:
+                    raise JournalFormatError(
+                        f"encoded journal entry exceeds {MAX_RECORD_BYTES} bytes"
+                    )
+                pending.append(entry)
+
+                metadata = dict(state.metadata)
+                metadata[_ENGINE_METADATA_KEY] = {
+                    "journal_id": journal_id,
+                    "head_hash": entry["record_hash"],
+                    "entry_count": entry_count + 1,
+                }
+                transaction.commit(pending, metadata=metadata)
+                return entry
+        except (UncommittedTailError, JsonlCorruptionError) as error:
+            raise JournalCorruptionError(_engine_append_refusal(error)) from error
+        except JsonlFormatError as error:
+            raise JournalFormatError(str(error)) from error
 
     def inspect(self) -> JournalInspection:
         """Return structural and integrity facts without changing the journal."""
 
-        if not os.path.lexists(self.path):
-            return self._scan_unlocked(collect_records=False).inspection
-        with self._lease():
-            return self._scan_unlocked(collect_records=False).inspection
+        return self._scan(collect_records=False).inspection
 
     def list_entries(
         self,
@@ -287,13 +358,11 @@ class ResearchJournal:
     def repair(self, *, apply: bool = False) -> RepairResult:
         """Preview or repair an invalid suffix, preserving the original as a backup."""
 
-        if not os.path.lexists(self.path):
-            return RepairResult(self.path, False, False, 0, 0, None, None, None)
-        with self._lease():
-            if self.path.is_symlink() or not self.path.is_file():
-                raise JournalCorruptionError("journal repair requires a regular, non-symlink file")
-            scan = self._scan_unlocked(collect_records=False)
+        with self.store.lease():
+            scan = self._scan(collect_records=False)
             inspection = scan.inspection
+            if not inspection.exists:
+                return RepairResult(self.path, False, False, 0, 0, None, None, None)
             if inspection.valid:
                 return RepairResult(
                     self.path,
@@ -304,6 +373,10 @@ class ResearchJournal:
                     None,
                     None,
                     None,
+                )
+            if inspection.valid_prefix_bytes >= inspection.size_bytes:
+                raise JournalCorruptionError(
+                    inspection.error or "journal repair requires a regular JSONL data file"
                 )
             removed = inspection.size_bytes - inspection.valid_prefix_bytes
             if not apply:
@@ -318,12 +391,15 @@ class ResearchJournal:
                     inspection.error,
                 )
 
-            original = self.path.read_bytes()
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-            backup = self.path.with_name(f"{self.path.name}.corrupt-{stamp}.bak")
-            _write_new_durable(backup, original)
-            _replace_durable(self.path, original[: inspection.valid_prefix_bytes])
-            repaired = self._scan_unlocked(collect_records=False).inspection
+            try:
+                receipt = self.store.repair_prefix(
+                    inspection.valid_prefix_bytes,
+                    backup_label="corrupt",
+                )
+            except JsonlCorruptionError as error:
+                raise JournalCorruptionError(str(error)) from error
+            backup = receipt.backup_path
+            repaired = self._scan(collect_records=False).inspection
             if not repaired.valid:
                 raise JournalCorruptionError(
                     f"journal remained invalid after repair; original is preserved at {backup}"
@@ -340,103 +416,50 @@ class ResearchJournal:
             )
 
     def _read_scan(self) -> _Scan:
-        if not os.path.lexists(self.path):
-            return self._scan_unlocked(collect_records=True)
-        with self._lease():
-            scan = self._scan_unlocked(collect_records=True)
+        scan = self._scan(collect_records=True)
         if not scan.inspection.valid:
             raise JournalCorruptionError(_append_refusal(scan.inspection))
         return scan
 
-    def _scan_unlocked(self, *, collect_records: bool) -> _Scan:
-        if not os.path.lexists(self.path):
-            return _Scan(
-                JournalInspection(self.path, False, False, True, None, 0, 0, 0, 0, None),
-                (),
-            )
-        if self.path.is_symlink():
-            return _invalid_scan(self.path, 0, 0, "journal path must not be a symbolic link")
-        if not self.path.is_file():
-            return _invalid_scan(self.path, 0, 0, "journal path is not a regular file")
-
-        size = self.path.stat().st_size
-        if size == 0:
-            return _Scan(
-                JournalInspection(self.path, True, False, True, None, 0, 0, 0, 0, None),
-                (),
-            )
-
-        records: list[dict[str, Any]] = []
+    def _scan(self, *, collect_records: bool) -> _Scan:
         previous_hash: str | None = None
         journal_id: str | None = None
         seen_entry_ids: set[str] = set()
-        valid_prefix = 0
-        record_count = 0
         entry_count = 0
-        with self.path.open("rb") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                try:
-                    record = _decode_line(line, line_number=line_number)
-                    journal_id, previous_hash, is_entry = _validate_record(
-                        record,
-                        line_number=line_number,
-                        expected_journal_id=journal_id,
-                        expected_previous_hash=previous_hash,
-                        seen_entry_ids=seen_entry_ids,
-                    )
-                except (JournalFormatError, UnicodeError, json.JSONDecodeError) as error:
-                    return _Scan(
-                        JournalInspection(
-                            path=self.path,
-                            exists=True,
-                            initialized=record_count > 0,
-                            valid=False,
-                            journal_id=journal_id,
-                            record_count=record_count,
-                            entry_count=entry_count,
-                            size_bytes=size,
-                            valid_prefix_bytes=valid_prefix,
-                            head_hash=previous_hash,
-                            error_line=line_number,
-                            error=str(error),
-                        ),
-                        tuple(records),
-                    )
-                record_count += 1
-                entry_count += int(is_entry)
-                valid_prefix += len(line)
-                if collect_records:
-                    records.append(record)
+
+        def validate(record: dict[str, Any], line_number: int) -> None:
+            nonlocal journal_id, previous_hash, entry_count
+            journal_id, previous_hash, is_entry = _validate_record(
+                record,
+                line_number=line_number,
+                expected_journal_id=journal_id,
+                expected_previous_hash=previous_hash,
+                seen_entry_ids=seen_entry_ids,
+            )
+            entry_count += int(is_entry)
+
+        physical = self.store.inspect_prefix(
+            validator=validate,
+            collect_records=collect_records,
+        )
 
         return _Scan(
             JournalInspection(
                 path=self.path,
-                exists=True,
-                initialized=True,
-                valid=True,
+                exists=physical.exists,
+                initialized=physical.record_count > 0,
+                valid=physical.valid,
                 journal_id=journal_id,
-                record_count=record_count,
+                record_count=physical.record_count,
                 entry_count=entry_count,
-                size_bytes=size,
-                valid_prefix_bytes=valid_prefix,
+                size_bytes=physical.size_bytes,
+                valid_prefix_bytes=physical.valid_prefix_bytes,
                 head_hash=previous_hash,
+                error_line=physical.error_line,
+                error=physical.error,
             ),
-            tuple(records),
+            physical.records,
         )
-
-    @contextmanager
-    def _lease(self) -> Iterator[None]:
-        lock = FileLock(str(self.lock_path), timeout=self.lock_timeout)
-        try:
-            lock.acquire()
-        except Timeout as error:
-            raise TimeoutError(
-                f"could not acquire journal lease within {self.lock_timeout}s: {self.lock_path}"
-            ) from error
-        try:
-            yield
-        finally:
-            lock.release()
 
 
 def _normalize_entry_input(
@@ -601,33 +624,6 @@ def _signed_record(record: dict[str, Any]) -> dict[str, Any]:
     return signed
 
 
-def _decode_line(line: bytes, *, line_number: int) -> dict[str, Any]:
-    if len(line) > MAX_RECORD_BYTES:
-        raise JournalFormatError(f"line {line_number} exceeds {MAX_RECORD_BYTES} bytes")
-    if not line.endswith(b"\n"):
-        raise JournalFormatError(f"line {line_number} is not LF-terminated")
-    if b"\r" in line:
-        raise JournalFormatError(f"line {line_number} contains a raw carriage return")
-    text = line[:-1].decode("utf-8", errors="strict")
-    if not text:
-        raise JournalFormatError(f"line {line_number} is blank")
-    try:
-        record = json.loads(text)
-    except (RecursionError, ValueError) as error:
-        raise JournalFormatError(f"line {line_number} is not valid bounded JSON") from error
-    if not isinstance(record, dict):
-        raise JournalFormatError(f"line {line_number} is not a JSON object")
-    try:
-        canonical = encode_record(record)
-    except (RecursionError, TypeError, ValueError) as error:
-        raise JournalFormatError(
-            f"line {line_number} contains a non-portable JSON value"
-        ) from error
-    if canonical != line:
-        raise JournalFormatError(f"line {line_number} is not in canonical JSONL form")
-    return record
-
-
 def _validate_record(
     record: dict[str, Any],
     *,
@@ -715,69 +711,6 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _append_durable(path: Path, payload: bytes) -> None:
-    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
-    flags |= getattr(os, "O_BINARY", 0)
-    descriptor = os.open(path, flags, 0o666)
-    try:
-        _write_all(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    _fsync_parent(path.parent)
-
-
-def _write_new_durable(path: Path, payload: bytes) -> None:
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    flags |= getattr(os, "O_BINARY", 0)
-    descriptor = os.open(path, flags, 0o666)
-    try:
-        _write_all(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    _fsync_parent(path.parent)
-
-
-def _replace_durable(path: Path, payload: bytes) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        _write_all(descriptor, payload)
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
-        os.replace(temporary, path)
-        _fsync_parent(path.parent)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        if temporary.exists():
-            temporary.unlink()
-
-
-def _write_all(descriptor: int, payload: bytes) -> None:
-    view = memoryview(payload)
-    while view:
-        written = os.write(descriptor, view)
-        if written <= 0:
-            raise OSError("short write while publishing journal bytes")
-        view = view[written:]
-
-
-def _fsync_parent(parent: Path) -> None:
-    if os.name == "nt":
-        return
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(parent, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def _append_refusal(inspection: JournalInspection) -> str:
     return (
         f"journal is invalid at line {inspection.error_line}: {inspection.error}; "
@@ -785,21 +718,8 @@ def _append_refusal(inspection: JournalInspection) -> str:
     )
 
 
-def _invalid_scan(path: Path, size: int, prefix: int, error: str) -> _Scan:
-    return _Scan(
-        JournalInspection(
-            path=path,
-            exists=True,
-            initialized=False,
-            valid=False,
-            journal_id=None,
-            record_count=0,
-            entry_count=0,
-            size_bytes=size,
-            valid_prefix_bytes=prefix,
-            head_hash=None,
-            error_line=1,
-            error=error,
-        ),
-        (),
+def _engine_append_refusal(error: Exception) -> str:
+    return (
+        f"journal transaction state is invalid: {error}; "
+        "run verify, then preview repair before appending"
     )

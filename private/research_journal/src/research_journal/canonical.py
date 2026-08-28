@@ -1,24 +1,13 @@
-"""Deterministic JSON encoding and record hashing."""
+"""Research-journal record hashing over the shared JSONL byte policy."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any, Mapping
 
+from jsonl_engine import canonical_bytes, encode_record
+
 HASH_PREFIX = "sha256:"
-
-
-def canonical_bytes(value: Any) -> bytes:
-    """Encode one JSON value under the journal's portable byte policy."""
-
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 def calculate_record_hash(record: Mapping[str, Any]) -> str:
@@ -29,7 +18,4 @@ def calculate_record_hash(record: Mapping[str, Any]) -> str:
     return HASH_PREFIX + hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
 
 
-def encode_record(record: Mapping[str, Any]) -> bytes:
-    """Encode exactly one LF-terminated JSONL record."""
-
-    return canonical_bytes(dict(record)) + b"\n"
+__all__ = ["calculate_record_hash", "canonical_bytes", "encode_record"]

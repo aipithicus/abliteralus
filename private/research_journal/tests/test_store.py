@@ -68,6 +68,24 @@ def test_list_filters_and_get_preserve_entry_relations(tmp_path: Path) -> None:
     ) == [second]
 
 
+def test_committed_journal_cursor_avoids_a_second_full_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "journal.jsonl"
+    ResearchJournal(path).append(kind="note", title="First")
+    journal = ResearchJournal(path)
+
+    def reject_scan(*, collect_records: bool):
+        pytest.fail(f"unexpected full journal scan (collect_records={collect_records})")
+
+    monkeypatch.setattr(journal, "_scan", reject_scan)
+    journal.append(kind="note", title="Second")
+
+    assert len(path.read_bytes().splitlines()) == 3
+    assert path.with_name(f"{path.name}.transactions.jsonl").is_file()
+    assert path.with_suffix(".jidx").is_file()
+
+
 def test_concurrent_writers_serialize_without_lost_entries(tmp_path: Path) -> None:
     path = tmp_path / "journal.jsonl"
 
@@ -154,8 +172,10 @@ def test_invalid_tail_blocks_append_and_repair_preserves_a_backup(tmp_path: Path
     assert repaired.backup is not None
     assert repaired.backup.read_bytes() == original + b'{"partial":'
     assert path.read_bytes() == original
+    assert path.with_suffix(".jidx").is_file()
     assert journal.inspect().valid
     journal.append(kind="note", title="After repair")
+    assert path.with_suffix(".jidx").is_file()
     assert journal.inspect().entry_count == 2
 
 
