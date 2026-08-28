@@ -1,12 +1,27 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
+# Python-generated artifacts at any repository depth
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.egg-info/
+**/*.egg
+**/.eggs/
+**/build/
+**/dist/
+
+# Python tool state at any repository depth
+**/.pytest_cache/
+**/.hypothesis/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytype/
+**/.pyre/
+**/.tox/
+**/.nox/
+**/.ipynb_checkpoints/
+**/__pypackages__/
+**/pytestdebug.log
+
 .DS_Store
-build/
-.eggs/
-*.egg
 .venv/
 .venv-jetson/
 venv/
@@ -30,9 +45,6 @@ deps/uv/**
 wandb/
 outputs/
 results/
-.ruff_cache/
-.pytest_cache/
-.mypy_cache/
 *.log
 *.ckpt
 .vscode/
@@ -97,9 +109,9 @@ docs/EFFICIENCY_AUDIT.md
 .windsurf/rules/
 
 # Coverage runtime artifacts
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-test-results/
-mutants/
+**/.coverage
+**/.coverage.*
+**/coverage.xml
+**/htmlcov/
+**/test-results/
+**/mutants/

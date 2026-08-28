@@ -23,7 +23,7 @@ enabled; this tool does not add permissive SSH options.
 From the ABLITERALUS repository root:
 
 ```text
-deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/surgery_artifacts --editable private/research_journal --editable private/lab_bench
+deps/uv/uv.exe pip install --python .venv/Scripts/python.exe --editable private/secret_manager --editable private/surgery_artifacts --editable private/jsonl_engine --editable private/research_journal --editable private/lab_bench
 ```
 
 This installs both console commands into the existing project venv; it does not
@@ -135,6 +135,10 @@ it has no runtime import or path dependency on Codex Scientiae. By default,
 canonical UTF-8 JSON, append operations are serialized across processes, and every
 record links to the previous record by SHA-256. The chain detects truncation,
 reordering, and edits; it is an integrity check, not a cryptographic signature.
+The shared JSONL engine appends batches in place and records each committed batch in
+one adjacent `.transactions.jsonl` table. A binary `{stem}.jidx` supplies indexed
+record offsets and is extended in place during ordinary append; neither mechanism
+creates per-entry shard files.
 
 Entries are explicit rather than inferred from subprocesses. Relate a note to its
 durable evidence using the shorthand relation flags, and put machine-readable

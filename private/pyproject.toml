@@ -2,6 +2,7 @@
 members = [
   "secret_manager",
   "surgery_artifacts",
+  "jsonl_engine",
   "research_journal",
   "guard_study",
   "lab_bench",
@@ -15,6 +16,7 @@ addopts = ["--strict-config", "--strict-markers", "-ra", "-p", "no:cacheprovider
 pythonpath = [
   "secret_manager/src",
   "surgery_artifacts/src",
+  "jsonl_engine/src",
   "research_journal/src",
   "lab_bench/src",
   "guard_study/src",
@@ -23,6 +25,7 @@ pythonpath = [
 testpaths = [
   "secret_manager/tests",
   "surgery_artifacts/tests",
+  "jsonl_engine/tests",
   "research_journal/tests",
   "lab_bench/tests",
   "guard_study/tests",

@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "mdnav": {
+            "command": "node",
+            "args": [
+                "D:/aghado01/science-facility/mcp/mdnav/src/index.ts"
+            ]
+        }
+    }
+}

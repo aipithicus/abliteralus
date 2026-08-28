@@ -14,6 +14,7 @@ resolution-markers = [
 members = [
     "abliteralus-guard-study",
     "abliteralus-lab-bench",
+    "aipithicus-jsonl-engine",
     "aipithicus-research-journal",
     "aipithicus-secret-manager",
     "aipithicus-surgery-artifacts",
@@ -283,15 +284,26 @@ wheels = [
 ]
 
 [[package]]
-name = "aipithicus-research-journal"
+name = "aipithicus-jsonl-engine"
 version = "0.1.0"
-source = { editable = "research_journal" }
+source = { editable = "jsonl_engine" }
 dependencies = [
     { name = "filelock" },
 ]
 
 [package.metadata]
 requires-dist = [{ name = "filelock", specifier = ">=3.13,<4" }]
+
+[[package]]
+name = "aipithicus-research-journal"
+version = "0.1.0"
+source = { editable = "research_journal" }
+dependencies = [
+    { name = "aipithicus-jsonl-engine" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aipithicus-jsonl-engine", editable = "jsonl_engine" }]
 
 [[package]]
 name = "aipithicus-secret-manager"
