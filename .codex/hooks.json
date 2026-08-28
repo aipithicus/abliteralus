@@ -1,0 +1,19 @@
+{
+  "description": "Repository policy hooks for ABLITERALUS.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/enforce_managed_pytest.py\"",
+            "commandWindows": "pwsh -NoProfile -Command '& ([IO.Path]::Combine((& git rev-parse --show-toplevel).Trim(), \".codex\", \"hooks\", \"invoke_enforce_managed_pytest.ps1\"))'",
+            "timeout": 10,
+            "statusMessage": "Enforcing managed pytest execution"
+          }
+        ]
+      }
+    ]
+  }
+}

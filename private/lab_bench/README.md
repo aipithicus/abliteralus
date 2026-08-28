@@ -60,6 +60,13 @@ lab-bench --config private/lab_bench/lab.local.toml test --cwd private -- -q
 lab-bench --config private/lab_bench/lab.local.toml test --keep-workdir -- private/lab_bench/tests
 ```
 
+A trusted repository-local Codex `PreToolUse` hook in
+[`../../.codex/hooks.json`](../../.codex/hooks.json) blocks shell commands that
+invoke pytest outside this controller. Review new or changed definitions with
+Codex `/hooks`; Codex skips an untrusted project hook. The hook is an agent
+guardrail, while this launcher remains the owner of workspace allocation,
+environment isolation, coverage state, and cleanup.
+
 A controller killed before its `finally` block may leave a workspace behind.
 Inspection is read-only, and cleanup is preview-first. A workspace whose active
 controller process still exists is never selected:
