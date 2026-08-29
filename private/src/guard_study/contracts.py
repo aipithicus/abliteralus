@@ -15,6 +15,7 @@ import yaml
 
 from .errors import ContractError
 from .layer_selection import LayerSelection, parse_layer_selection
+from .precision import PrecisionSpec, parse_precision
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -36,6 +37,7 @@ _STUDY_KEYS = {
     "dataset",
     "surgery_experiment",
     "causal_mapping",
+    "precision",
     "steering",
     "selection",
     "output",
@@ -111,6 +113,7 @@ class GuardStudySpec:
     dataset_path: Path
     surgery_experiment_path: Path
     layer_selection: LayerSelection
+    precision: PrecisionSpec
     max_patch_pairs: int
     doses: tuple[float, ...]
     include_joint_arm: bool
@@ -358,6 +361,8 @@ def load_study_spec(path: str | Path) -> GuardStudySpec:
         label="study.causal_mapping",
     )
 
+    precision = parse_precision(raw.get("precision"), label="study.precision")
+
     steering = _mapping(raw.get("steering"), "study.steering")
     _strict_keys(steering, {"doses", "include_joint_arm", "seed"}, "study.steering")
     doses = tuple(
@@ -402,6 +407,7 @@ def load_study_spec(path: str | Path) -> GuardStudySpec:
         dataset_path=dataset_path,
         surgery_experiment_path=surgery_path,
         layer_selection=layer_selection,
+        precision=precision,
         max_patch_pairs=max_patch_pairs,
         doses=doses,
         include_joint_arm=include_joint,

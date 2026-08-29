@@ -44,6 +44,50 @@ The `low_causal_layer` control stays pinned to `mean_absolute_effect` regardless
 the configured strategy. It exists to supply an inert layer, and a differential
 score near zero means a flat region of the plateau, not an inactive layer.
 
+## Precision
+
+A guard margin is a difference of two logits of similar magnitude, so its error
+floor tracks the size of the *operands*, not of the effect being measured. At a
+margin near 13 logits the representable spacing is 0.0625 in bfloat16, 0.0078 in
+float16, and about 1e-6 in float32. A causal effect of 0.05 is therefore not small
+in bfloat16, it is unrepresentable.
+
+The optional `precision` block makes this a declared parameter rather than an
+inherited accident:
+
+```yaml
+precision:
+  compute: inherit     # inherit | float32 | bfloat16 | float16
+  readout: float32     # float32 | float64
+  allow_tf32: false
+```
+
+- `compute` defaults to `inherit`, taking the dtype from the surgery experiment so
+  that the two specs cannot silently disagree. Declaring it here overrides that
+  dtype for the study alone and leaves surgery runs untouched.
+- `readout` governs how the safe/unsafe margin is measured. Rather than subtracting
+  two already-rounded head logits, the runner projects the final hidden state onto
+  the raw `W_U[unsafe] - W_U[safe]` axis at this precision. That is one dot product
+  instead of a vocabulary-wide head, and it stays valid when the head itself is
+  quantized. The projection is checked against the model's own logits on one probe
+  case before the run trusts it, so a checkpoint whose reported final hidden state
+  is not the post-norm residual fails at start rather than reporting wrong margins.
+- `allow_tf32` is pinned for the duration of the run and recorded in the manifest.
+  This matters on Tensor Core hardware: a float32 matmul may be computed in TF32,
+  whose significand is 11 bits — the same width as float16. A run that declares
+  float32 and silently receives TF32 would otherwise report a resolution it never had.
+
+Rows now carry both `unsafe_minus_safe_logit_margin` (the projected measurement)
+and `head_logit_margin` (what the model's own head emitted), so the two can be
+compared directly.
+
+`causal-map.json` carries a `resolution` block naming the readout dtype, the
+compute dtype, whichever of the two binds, the peak margin observed, and the
+resulting `effect_floor`. A float32 readout removes the cancellation term but not
+the rounding already carried by the residual, so the floor follows the coarser
+dtype. Layers whose mean effect falls below it are listed in `unresolved_layers`
+and marked `resolved: false`: they are not measured as inert, they are unmeasured.
+
 The dataset carries a SHA-256 digest over its canonical content with the digest
 field omitted. Any prompt or split change therefore requires an explicit new
 digest. This prevents accidental fit/dev/test drift while preserving readable YAML.

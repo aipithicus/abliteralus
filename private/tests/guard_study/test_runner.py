@@ -9,8 +9,11 @@ import torch
 from guard_study.contracts import GuardCase, GuardDatasetContract, GuardPair
 from guard_study.interventions import build_contrastive_direction
 from guard_study.layer_selection import LayerSelection
+from guard_study.errors import StudyRuntimeError
 from guard_study.runner import (
+    LabelReadout,
     PreparedCase,
+    _unnormalized_label_axis,
     _study_hf_home,
     align_cases_to_emitted_label,
     baseline_generation_rows,
@@ -270,3 +273,85 @@ def test_comparison_and_selection_use_paired_margin_deltas():
     assert comparison["mean_delta"] == pytest.approx(-0.5)
     assert comparison["fraction_down"] == 1.0
     assert selection["met_contract"] is True
+
+
+class _PrecisionToyGuard(torch.nn.Module):
+    """A guard whose head rounds to bfloat16 while its residual stays exact.
+
+    This is the shape of the real failure: the margin is a difference of two
+    similar logits, so the head's rounding lands on a grid far coarser than the
+    effect being measured.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.layers = torch.nn.ModuleList([_ToyLayer()])
+        self.lm_head = torch.nn.Linear(2, 4, bias=False)
+        with torch.no_grad():
+            self.lm_head.weight.zero_()
+            self.lm_head.weight[2] = torch.tensor([6.5, 0.0])
+            self.lm_head.weight[3] = torch.tensor([6.5, 0.0])
+            self.lm_head.weight[3, 1] = 0.05
+
+    def forward(self, input_ids, attention_mask=None, use_cache=False, output_hidden_states=False):
+        del attention_mask, use_cache
+        hidden = torch.ones((1, int(input_ids.shape[-1]), 2))
+        for layer in self.layers:
+            hidden = layer(hidden)
+        logits = self.lm_head(hidden).to(torch.bfloat16).float()
+        return SimpleNamespace(
+            logits=logits,
+            hidden_states=(hidden,) if output_hidden_states else None,
+        )
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+
+def _precision_case() -> PreparedCase:
+    case = GuardCase(
+        name="probe",
+        prompt="probe",
+        expected="unsafe",
+        pair_id="probe",
+        category="probe",
+    )
+    return PreparedCase(
+        case=case,
+        prompt_inputs=MappingProxyType({"input_ids": torch.tensor([[1]])}),
+    )
+
+
+def test_projected_readout_recovers_a_margin_the_head_quantizes_away():
+    model = _PrecisionToyGuard()
+    prepared = _precision_case()
+    axis = _unnormalized_label_axis(model, safe_token_id=2, unsafe_token_id=3)
+    readout = LabelReadout(axis, dtype=torch.float32)
+
+    observation = observe_case(
+        model,
+        [],
+        prepared,
+        tokenizer=_Tokenizer(),
+        input_device=torch.device("cpu"),
+        safe_token_id=2,
+        unsafe_token_id=3,
+        readout=readout,
+    )
+
+    # The true margin is 0.05; the bfloat16 head cannot represent it at logit 6.5.
+    assert observation.row["unsafe_minus_safe_logit_margin"] == pytest.approx(0.05, abs=1e-6)
+    assert observation.row["head_logit_margin"] != pytest.approx(0.05, abs=1e-3)
+    assert observation.final_hidden is not None
+
+
+def test_readout_verification_rejects_a_hidden_state_that_is_not_the_residual():
+    model = _PrecisionToyGuard()
+    axis = _unnormalized_label_axis(model, safe_token_id=2, unsafe_token_id=3)
+    readout = LabelReadout(axis, dtype=torch.float32)
+
+    readout.verify(torch.ones(2), head_margin=0.05, tolerance=0.01)
+    assert readout.verified is True
+
+    with pytest.raises(StudyRuntimeError, match="disagrees with the model head"):
+        readout.verify(torch.tensor([9.0, 9.0]), head_margin=0.05, tolerance=0.01)

@@ -35,6 +35,7 @@ from .interventions import (
     orthogonal_sham,
 )
 from .layer_selection import LayerSelection
+from .precision import PrecisionSpec, pinned_matmul_precision, resolution_floor
 
 if TYPE_CHECKING:
     from abliteralus.models.loader import ModelHandle
@@ -61,6 +62,7 @@ class PreparedCase:
 class Observation:
     row: dict[str, Any]
     activations: dict[int, torch.Tensor]
+    final_hidden: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -290,6 +292,46 @@ def _inputs_to_device(
     return {name: tensor.to(device) for name, tensor in inputs.items()}
 
 
+class LabelReadout:
+    """Read the safe/unsafe margin off the final hidden state at a chosen precision.
+
+    The margin is a two-token question, so it needs one dot product rather than a
+    vocabulary-wide head. Computing it from the residual keeps the measurement
+    independent of the head's own dtype, which matters once the head is quantized
+    or the model is too large to hold an unquantized one.
+    """
+
+    def __init__(self, axis: torch.Tensor, *, dtype: torch.dtype) -> None:
+        self.dtype = dtype
+        self.axis = axis.detach().to(dtype=dtype).cpu().reshape(-1)
+        self.verified = False
+
+    def margin(self, hidden: torch.Tensor) -> float:
+        value = hidden.detach().to(dtype=self.dtype).cpu().reshape(-1)
+        if value.numel() != self.axis.numel():
+            raise StudyRuntimeError("final hidden state does not match the label axis dimension")
+        return float(torch.dot(value, self.axis).item())
+
+    def verify(self, hidden: torch.Tensor, head_margin: float, *, tolerance: float) -> float:
+        """Confirm the projection reproduces the model's own margin before trusting it.
+
+        The final hidden state is taken from the model's reported hidden states,
+        which are expected to be post-final-norm. Rather than assume that holds for
+        an unfamiliar checkpoint, check it once against the head and fail loudly.
+        """
+
+        projected = self.margin(hidden)
+        error = abs(projected - head_margin)
+        if error > tolerance:
+            raise StudyRuntimeError(
+                "projected label margin disagrees with the model head "
+                f"({projected:.6f} vs {head_margin:.6f}, error {error:.6f} > {tolerance:.6f}); "
+                "the final hidden state is probably not the post-norm residual"
+            )
+        self.verified = True
+        return error
+
+
 def _row_from_logits(
     prepared: PreparedCase,
     logits: torch.Tensor,
@@ -297,9 +339,19 @@ def _row_from_logits(
     tokenizer: Any,
     safe_token_id: int,
     unsafe_token_id: int,
+    readout: LabelReadout | None = None,
+    hidden: torch.Tensor | None = None,
 ) -> dict[str, Any]:
     scores = logits[0, -1].detach().float().cpu()
-    margin = float((scores[unsafe_token_id] - scores[safe_token_id]).item())
+    head_margin = float((scores[unsafe_token_id] - scores[safe_token_id]).item())
+    # The head emits the margin already rounded to the compute dtype, where a
+    # difference of two similar logits keeps only the error floor of the operands.
+    # Projecting the final hidden state onto the raw label axis in the readout
+    # dtype recovers the same quantity without that cancellation.
+    if readout is not None and hidden is not None:
+        margin = readout.margin(hidden)
+    else:
+        margin = head_margin
     top_token_id = int(torch.argmax(scores).item())
     predicted = None
     if top_token_id == safe_token_id:
@@ -318,6 +370,7 @@ def _row_from_logits(
         "baseline_generated_margin": prepared.baseline_generated_margin,
         "alignment_margin_error": prepared.alignment_margin_error,
         "unsafe_minus_safe_logit_margin": margin,
+        "head_logit_margin": head_margin,
         "pairwise_label": "unsafe" if margin > 0 else "safe",
         "predicted_label": predicted,
         "parsed": predicted is not None,
@@ -337,6 +390,7 @@ def observe_case(
     safe_token_id: int,
     unsafe_token_id: int,
     capture_layers: Iterable[int] = (),
+    readout: LabelReadout | None = None,
 ) -> Observation:
     captures: dict[int, torch.Tensor] = {}
     handles: list[torch.utils.hooks.RemovableHandle] = []
@@ -359,23 +413,37 @@ def observe_case(
             if layer_idx < 0 or layer_idx >= len(layers):
                 raise StudyRuntimeError(f"capture layer {layer_idx} is out of range")
             handles.append(layers[layer_idx].register_forward_hook(make_hook(layer_idx)))
+        extra = {"output_hidden_states": True} if readout is not None else {}
         with torch.inference_mode():
             output = model(
                 **_inputs_to_device(prepared.inputs, input_device),
                 use_cache=False,
+                **extra,
             )
         logits = output.logits if hasattr(output, "logits") else output[0]
+        hidden = None
+        if readout is not None:
+            hidden_states = getattr(output, "hidden_states", None)
+            if not hidden_states:
+                raise StudyRuntimeError("model reported no hidden states for the label readout")
+            hidden = hidden_states[-1][0, -1]
         row = _row_from_logits(
             prepared,
             logits,
             tokenizer=tokenizer,
             safe_token_id=safe_token_id,
             unsafe_token_id=unsafe_token_id,
+            readout=readout,
+            hidden=hidden,
         )
     finally:
         for handle in reversed(handles):
             handle.remove()
-    return Observation(row=row, activations=captures)
+    return Observation(
+        row=row,
+        activations=captures,
+        final_hidden=None if hidden is None else hidden.detach().cpu().clone(),
+    )
 
 
 def evaluate_cases(
@@ -389,6 +457,7 @@ def evaluate_cases(
     unsafe_token_id: int,
     arm: SteeringArm | None = None,
     dose: float = 0.0,
+    readout: LabelReadout | None = None,
 ) -> list[dict[str, Any]]:
     context = (
         LayerSteeringHooks(
@@ -412,6 +481,7 @@ def evaluate_cases(
                     input_device=input_device,
                     safe_token_id=safe_token_id,
                     unsafe_token_id=unsafe_token_id,
+                    readout=readout,
                 ).row
             )
     return rows
@@ -506,6 +576,7 @@ def evaluate_generations(
     pad_token_id: int | None,
     arm: SteeringArm | None = None,
     dose: float = 0.0,
+    readout: LabelReadout | None = None,
 ) -> list[dict[str, Any]]:
     """Verify an intervention by greedily generating from each original prompt."""
 
@@ -663,6 +734,7 @@ def _fit_observations(
     input_device: torch.device,
     safe_token_id: int,
     unsafe_token_id: int,
+    readout: LabelReadout | None = None,
 ) -> dict[str, Observation]:
     layer_indices = tuple(range(len(layers)))
     return {
@@ -675,6 +747,7 @@ def _fit_observations(
             safe_token_id=safe_token_id,
             unsafe_token_id=unsafe_token_id,
             capture_layers=layer_indices,
+            readout=readout,
         )
         for prepared in fit_cases
     }
@@ -697,21 +770,37 @@ def _contrastive_directions(
     return directions
 
 
+def _unnormalized_label_axis(
+    model: torch.nn.Module,
+    *,
+    safe_token_id: int,
+    unsafe_token_id: int,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """Return W_U[unsafe] - W_U[safe], the axis whose projection *is* the margin."""
+
+    output = model.get_output_embeddings() if hasattr(model, "get_output_embeddings") else None
+    if output is None or not hasattr(output, "weight"):
+        raise StudyRuntimeError("model exposes no output embedding matrix")
+    weight = output.weight.detach().to(dtype=dtype).cpu()
+    axis = weight[unsafe_token_id] - weight[safe_token_id]
+    if axis.norm() < 1e-8:
+        raise StudyRuntimeError("safe and unsafe output embeddings have no usable separation")
+    return axis
+
+
 def _raw_label_axis(
     model: torch.nn.Module,
     *,
     safe_token_id: int,
     unsafe_token_id: int,
 ) -> torch.Tensor:
-    output = model.get_output_embeddings() if hasattr(model, "get_output_embeddings") else None
-    if output is None or not hasattr(output, "weight"):
-        raise StudyRuntimeError("model exposes no output embedding matrix")
-    weight = output.weight.detach().float().cpu()
-    axis = weight[unsafe_token_id] - weight[safe_token_id]
-    norm = axis.norm()
-    if norm < 1e-8:
-        raise StudyRuntimeError("safe and unsafe output embeddings have no usable separation")
-    return axis / norm
+    axis = _unnormalized_label_axis(
+        model,
+        safe_token_id=safe_token_id,
+        unsafe_token_id=unsafe_token_id,
+    )
+    return axis / axis.norm()
 
 
 def _patched_margin(
@@ -724,6 +813,7 @@ def _patched_margin(
     input_device: torch.device,
     safe_token_id: int,
     unsafe_token_id: int,
+    readout: LabelReadout | None = None,
 ) -> float:
     with LastTokenPatch(layer, activation):
         observation = observe_case(
@@ -734,6 +824,7 @@ def _patched_margin(
             input_device=input_device,
             safe_token_id=safe_token_id,
             unsafe_token_id=unsafe_token_id,
+            readout=readout,
         )
     return float(observation.row["unsafe_minus_safe_logit_margin"])
 
@@ -752,6 +843,7 @@ def build_causal_map(
     unsafe_token_id: int,
     max_patch_pairs: int,
     selection: LayerSelection,
+    readout: LabelReadout | None = None,
 ) -> dict[str, Any]:
     selected_pairs = contract.pairs("fit")[:max_patch_pairs]
     effects: dict[int, list[dict[str, Any]]] = {index: [] for index in range(len(layers))}
@@ -818,6 +910,29 @@ def build_causal_map(
             "mean_absolute_effect": mean_absolute,
             "pair_effects": effects[layer_idx],
         }
+    # Every effect is a difference of two margins of similar size, so the floor
+    # tracks the margin magnitude rather than the effect magnitude.
+    peak_margin = max(
+        (abs(float(entry["baseline_pair_gap"])) for row in effects.values() for entry in row),
+        default=1.0,
+    )
+    readout_dtype = readout.dtype if readout is not None else torch.float32
+    compute_dtype = next(
+        (parameter.dtype for parameter in model.parameters() if parameter.device.type != "meta"),
+        torch.float32,
+    )
+    # An fp32 readout removes the cancellation term but not the rounding already
+    # carried by the residual, so the floor is bounded by whichever dtype is
+    # coarser. Averaging over pairs dithers it, since each pair rounds
+    # independently.
+    binding_dtype = max(
+        (readout_dtype, compute_dtype),
+        key=lambda dtype: resolution_floor(dtype, peak_margin),
+    )
+    floor = resolution_floor(binding_dtype, peak_margin) / max(len(selected_pairs), 1)
+    for layer_idx in range(len(layers)):
+        per_layer[str(layer_idx)]["resolved"] = magnitudes[layer_idx] > floor
+
     ranking = selection.rank(magnitudes)
     top_layers = list(selection.top_layers(magnitudes))
     # The low-causal control must stay pinned to raw magnitude: under a differential
@@ -829,6 +944,18 @@ def build_causal_map(
         "patch_position": "last",
         "patch_pairs": [pair.pair_id for pair in selected_pairs],
         "layer_selection": selection.summary(),
+        "resolution": {
+            "readout_dtype": str(readout_dtype).removeprefix("torch."),
+            "compute_dtype": str(compute_dtype).removeprefix("torch."),
+            "binding_dtype": str(binding_dtype).removeprefix("torch."),
+            "peak_margin": peak_margin,
+            "effect_floor": floor,
+            "unresolved_layers": [
+                layer_idx
+                for layer_idx in range(len(layers))
+                if not per_layer[str(layer_idx)]["resolved"]
+            ],
+        },
         "top_layers": top_layers,
         "low_causal_layer": low_causal_layer,
         "ranking": [
@@ -1000,6 +1127,54 @@ def _label_axis_arm(
     )
 
 
+def _build_verified_readout(
+    model: torch.nn.Module,
+    probe: PreparedCase,
+    *,
+    tokenizer: Any,
+    input_device: torch.device,
+    safe_token_id: int,
+    unsafe_token_id: int,
+    precision: PrecisionSpec,
+) -> LabelReadout:
+    """Construct the margin readout and check it against the head on one probe case.
+
+    The check costs a single forward pass and converts a silent class of wrong
+    answers — a model whose reported final hidden state is not the post-norm
+    residual — into a failure at run start.
+    """
+
+    axis = _unnormalized_label_axis(
+        model,
+        safe_token_id=safe_token_id,
+        unsafe_token_id=unsafe_token_id,
+        dtype=precision.readout_dtype,
+    )
+    readout = LabelReadout(axis, dtype=precision.readout_dtype)
+    observation = observe_case(
+        model,
+        [],
+        probe,
+        tokenizer=tokenizer,
+        input_device=input_device,
+        safe_token_id=safe_token_id,
+        unsafe_token_id=unsafe_token_id,
+        readout=readout,
+    )
+    head_margin = float(observation.row["head_logit_margin"])
+    compute_dtype = next(
+        (parameter.dtype for parameter in model.parameters() if parameter.device.type != "meta"),
+        torch.float32,
+    )
+    # Agreement is only expected to the resolution the head itself had, with room
+    # for the accumulated rounding of the projection against a rounded logit pair.
+    tolerance = 8.0 * resolution_floor(compute_dtype, max(abs(head_margin), 1.0))
+    if observation.final_hidden is None:
+        raise StudyRuntimeError("probe observation returned no final hidden state")
+    readout.verify(observation.final_hidden, head_margin, tolerance=tolerance)
+    return readout
+
+
 def run_loaded_study(
     handle: ModelHandle,
     contract: GuardDatasetContract,
@@ -1043,6 +1218,15 @@ def run_loaded_study(
     dev_cases = [prepared[case.name] for case in dev_contract_cases]
 
     model.eval()
+    readout = _build_verified_readout(
+        model,
+        fit_cases[0],
+        tokenizer=tokenizer,
+        input_device=input_device,
+        safe_token_id=safe_token_id,
+        unsafe_token_id=unsafe_token_id,
+        precision=study.precision,
+    )
     observations = _fit_observations(
         model,
         layers,
@@ -1051,6 +1235,7 @@ def run_loaded_study(
         input_device=input_device,
         safe_token_id=safe_token_id,
         unsafe_token_id=unsafe_token_id,
+        readout=readout,
     )
     directions = _contrastive_directions(observations, contract.pairs("fit"), len(layers))
     causal_map = build_causal_map(
@@ -1066,6 +1251,7 @@ def run_loaded_study(
         unsafe_token_id=unsafe_token_id,
         max_patch_pairs=study.max_patch_pairs,
         selection=study.layer_selection,
+        readout=readout,
     )
 
     tensor_payload: dict[str, torch.Tensor] = {}
@@ -1092,6 +1278,7 @@ def run_loaded_study(
         input_device=input_device,
         safe_token_id=safe_token_id,
         unsafe_token_id=unsafe_token_id,
+        readout=readout,
     )
     learned_arms = build_learned_arms(
         causal_map,
@@ -1112,6 +1299,7 @@ def run_loaded_study(
                 unsafe_token_id=unsafe_token_id,
                 arm=arm,
                 dose=dose,
+                readout=readout,
             )
             sweeps.append(_arm_result(arm, dose, rows, baseline_dev))
 
@@ -1373,23 +1561,30 @@ def _run_study_in_environment(
         checkpoint = resolve_model_checkpoint(surgery, offline=offline)
         manifest["checkpoint"] = str(checkpoint)
         model_cfg = surgery.model
-        handle = load_model(
-            model_name=str(checkpoint),
-            task="causal_lm",
-            device=str(model_cfg["device"]),
-            dtype=str(model_cfg["dtype"]),
-            trust_remote_code=bool(model_cfg["trust_remote_code"]),
-            skip_snapshot=True,
-            local_files_only=True,
-        )
-        run_loaded_study(
-            handle,
-            contract,
-            study,
-            max_seq_length=int(surgery.pipeline["max_seq_length"]),
-            decision_max_new_tokens=int(surgery.evaluation.get("max_new_tokens", 8)),
-            output_directory=output_directory,
-        )
+        compute_dtype = study.precision.resolve_compute(str(model_cfg["dtype"]))
+        with pinned_matmul_precision(study.precision) as tf32_state:
+            manifest["precision"] = {
+                **study.precision.summary(inherited=str(model_cfg["dtype"])),
+                **tf32_state,
+            }
+            _write_json(output_directory / "run-manifest.json", manifest)
+            handle = load_model(
+                model_name=str(checkpoint),
+                task="causal_lm",
+                device=str(model_cfg["device"]),
+                dtype=compute_dtype,
+                trust_remote_code=bool(model_cfg["trust_remote_code"]),
+                skip_snapshot=True,
+                local_files_only=True,
+            )
+            run_loaded_study(
+                handle,
+                contract,
+                study,
+                max_seq_length=int(surgery.pipeline["max_seq_length"]),
+                decision_max_new_tokens=int(surgery.evaluation.get("max_new_tokens", 8)),
+                output_directory=output_directory,
+            )
         manifest["status"] = "complete"
         manifest["ended_at"] = _utc_now()
     except BaseException as error:
