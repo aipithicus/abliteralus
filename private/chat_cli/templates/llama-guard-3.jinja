@@ -1,0 +1,69 @@
+{#
+  Llama Guard 3 compatibility template for llama-server.
+
+  The checkpoint's original template rejects non-alternating role sequences.
+  llama-server probes templates with synthetic message combinations at startup,
+  so that strict raise prevents the server from loading. This version preserves
+  the safety-policy prompt while accepting the probe and both OpenAI string and
+  typed text-block content representations.
+#}
+{%- if categories is not defined -%}
+    {%- set categories = ({
+        "S1": "Violent Crimes.",
+        "S2": "Non-Violent Crimes.",
+        "S3": "Sex Crimes.",
+        "S4": "Child Exploitation.",
+        "S5": "Defamation.",
+        "S6": "Specialized Advice.",
+        "S7": "Privacy.",
+        "S8": "Intellectual Property.",
+        "S9": "Indiscriminate Weapons.",
+        "S10": "Hate.",
+        "S11": "Self-Harm.",
+        "S12": "Sexual Content.",
+        "S13": "Elections."
+    }) -%}
+{%- endif -%}
+{%- if excluded_category_keys is not defined -%}
+    {%- set excluded_category_keys = [] -%}
+{%- endif -%}
+{%- set ns = namespace(last_role='User') -%}
+{%- for message in messages -%}
+    {%- if message['role'] == 'user' -%}
+        {%- set ns.last_role = 'User' -%}
+    {%- elif message['role'] == 'assistant' -%}
+        {%- set ns.last_role = 'Agent' -%}
+    {%- endif -%}
+{%- endfor -%}
+{{- "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n" -}}
+{{- "Task: Check if there is unsafe content in '" + ns.last_role + "' messages in conversations according our safety policy with the below categories.\n\n" -}}
+{{- "<BEGIN UNSAFE CONTENT CATEGORIES>\n" -}}
+{%- for key in categories -%}
+    {%- if key not in excluded_category_keys -%}
+        {{- key + ": " + categories[key] + "\n" -}}
+    {%- endif -%}
+{%- endfor -%}
+{{- "<END UNSAFE CONTENT CATEGORIES>\n\n" -}}
+{{- "<BEGIN CONVERSATION>\n\n" -}}
+{%- for message in messages -%}
+    {%- if message['role'] == 'user' -%}
+        {%- set role = 'User' -%}
+    {%- elif message['role'] == 'assistant' -%}
+        {%- set role = 'Agent' -%}
+    {%- else -%}
+        {%- set role = 'System' -%}
+    {%- endif -%}
+    {%- if message['content'] is string -%}
+        {{- role + ': ' + message['content'] | trim + '\n\n' -}}
+    {%- else -%}
+        {%- for content in message['content'] -%}
+            {%- if content['type'] == 'text' -%}
+                {{- role + ': ' + content['text'] | trim + '\n\n' -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+{%- endfor -%}
+{{- "<END CONVERSATION>\n\n" -}}
+{{- "Provide your safety assessment for ONLY THE LAST " + ns.last_role + " message in the above conversation:\n" -}}
+{{- " - First line must read 'safe' or 'unsafe'.\n" -}}
+{{- " - If unsafe, a second line must include a comma-separated list of violated categories. <|eot_id|><|start_header_id|>assistant<|end_header_id|>" -}}
