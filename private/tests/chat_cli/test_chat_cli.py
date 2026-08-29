@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -8,13 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import chat_cli
 
-MODULE_PATH = Path(__file__).resolve().parents[2] / "chat_cli" / "chat.py"
-SPEC = importlib.util.spec_from_file_location("abliteralus_private_chat_cli", MODULE_PATH)
-assert SPEC is not None and SPEC.loader is not None
-chat_cli = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = chat_cli
-SPEC.loader.exec_module(chat_cli)
 
 
 class _Response:

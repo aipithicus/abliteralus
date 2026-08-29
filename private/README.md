@@ -61,7 +61,7 @@ temporary state remain repository-local:
 private/.venv/Scripts/lab-bench.exe --config private/config/lab.local.toml test --cwd private -- -q
 ```
 
-The same environment provides `abliteralus-lightning`, `guard-study`,
+The same environment provides `abliteralus-lightning`, `chat-cli`, `guard-study`,
 `lab-bench`, `research-journal`, `secret-broker`, `secret-manager`, and
 `surgery-artifact`.
 
@@ -69,6 +69,7 @@ The same environment provides `abliteralus-lightning`, `guard-study`,
 
 - [Lab bench](docs/lab-bench.md)
 - [Surgery experiment bench](docs/surgery-experiment-bench.md)
+- [Chat CLI](docs/chat-cli.md)
 - [Guard study](docs/guard-study.md)
 - [JSONL engine](docs/jsonl-engine.md)
 - [Research journal](docs/research-journal.md)

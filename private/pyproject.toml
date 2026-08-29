@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 abliteralus-lightning = "lab_bench.lightning:main"
+chat-cli = "chat_cli.cli:main"
 guard-study = "guard_study.cli:main"
 lab-bench = "lab_bench.cli:main"
 research-journal = "research_journal.cli:main"
@@ -56,6 +57,7 @@ explicit = true
 where = ["src"]
 
 [tool.setuptools.package-data]
+chat_cli = ["templates/*.jinja"]
 jsonl_engine = ["schemas/*.json"]
 research_journal = ["schemas/*.json"]
 

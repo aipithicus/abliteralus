@@ -50,8 +50,6 @@
         {%- set role = 'User' -%}
     {%- elif message['role'] == 'assistant' -%}
         {%- set role = 'Agent' -%}
-    {%- else -%}
-        {%- set role = 'System' -%}
     {%- endif -%}
     {%- if message['content'] is string -%}
         {{- role + ': ' + message['content'] | trim + '\n\n' -}}

@@ -21,15 +21,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from .errors import ChatCliError
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
-REPOSITORY = SCRIPT_DIRECTORY.parents[1]
+REPOSITORY = Path(__file__).resolve().parents[3]
 DEFAULT_ALIAS = "local-subject"
 WINDOWS_MISSING_DLL_CODES = {-1073741515, 3221225781}
-
-
-class ChatCliError(RuntimeError):
-    """A normalized launcher, server, or response error."""
 
 
 @dataclass(frozen=True, slots=True)

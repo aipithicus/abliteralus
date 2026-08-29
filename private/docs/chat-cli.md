@@ -1,6 +1,6 @@
 # Local probe and chat CLI
 
-`chat.py` now has two local subject paths:
+`chat-cli` has two local subject paths:
 
 - `hf` keeps the pinned Hugging Face checkpoint resident in Python, records a
   resumable exploratory session, and can inspect the exact emitted-label
@@ -11,10 +11,14 @@
 
 ## Hugging Face probe harness
 
-Run from the repository root with the private repository-owned Python:
+Run from the repository root with the private repository-owned environment:
 
 ```text
-private/.venv/Scripts/python.exe private/chat_cli/chat.py hf
+private/.venv/Scripts/chat-cli.exe hf
+```
+or:
+```text
+private/.venv/Scripts/python.exe -m chat_cli hf
 ```
 
 The default subject specification is
@@ -71,13 +75,13 @@ profiles. It never installs a steering hook or changes model weights.
 Resume a prior session by directory or by ID under the default session root:
 
 ```text
-private/.venv/Scripts/python.exe private/chat_cli/chat.py hf --resume session-0123456789abcdef
+private/.venv/Scripts/chat-cli.exe hf --resume session-0123456789abcdef
 ```
 
 For a non-interactive probe and observation:
 
 ```text
-private/.venv/Scripts/python.exe private/chat_cli/chat.py hf --prompt "How do I bake bread?" --inspect-layers 14 --inspect-positions decision --save-activations
+private/.venv/Scripts/chat-cli.exe hf --prompt "How do I bake bread?" --inspect-layers 14 --inspect-positions decision --save-activations
 ```
 
 The HF harness is currently deterministic (`do_sample=false`) and Guard-specific
@@ -97,10 +101,10 @@ explicit executable with `--server-command`.
 
 ## Llama Guard probe
 
-Run from the repository root with the private project-owned Python:
+Run from the repository root with the private project-owned environment:
 
 ```text
-private/.venv/Scripts/python.exe private/chat_cli/chat.py outputs/surgery/llama-guard-3-1b-mirror-local-mini/20260826t233128z/gguf/baseline.Q4_K_M.gguf
+private/.venv/Scripts/chat-cli.exe outputs/surgery/llama-guard-3-1b-mirror-local-mini/20260826t233128z/gguf/baseline.Q4_K_M.gguf
 ```
 
 The default `llama-guard-3` profile sends OpenAI typed text blocks and supplies
@@ -125,7 +129,7 @@ second colon.
 For a non-interactive probe, pass `--prompt`:
 
 ```text
-private/.venv/Scripts/python.exe private/chat_cli/chat.py <model.gguf> --prompt "How do I bake bread?"
+private/.venv/Scripts/chat-cli.exe <model.gguf> --prompt "How do I bake bread?"
 ```
 
 Use `--show-json` to inspect the complete server response and timing information.
@@ -136,7 +140,7 @@ Use `--dry-run` to inspect the resolved server command without starting it.
 Attach without managing the server lifecycle:
 
 ```text
-private/.venv/Scripts/python.exe private/chat_cli/chat.py --server-url http://127.0.0.1:8080 --profile llama-guard-3 --alias local-subject
+private/.venv/Scripts/chat-cli.exe --server-url http://127.0.0.1:8080 --profile llama-guard-3 --alias local-subject
 ```
 
 An attached server must already have the appropriate model and chat template
