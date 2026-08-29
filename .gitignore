@@ -116,3 +116,10 @@ docs/EFFICIENCY_AUDIT.md
 **/htmlcov/
 **/test-results/
 **/mutants/
+
+# JSONL store derived state
+# The data file and its transaction log are authoritative and tracked. The JIDX
+# rebuilds deterministically from the data file, and the lease is runtime state
+# held only while a writer is live, so neither belongs in a diff.
+**/*.jidx
+**/*.jsonl.lock

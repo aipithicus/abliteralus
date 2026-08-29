@@ -26,6 +26,7 @@ lab-bench = "lab_bench.cli:main"
 research-journal = "research_journal.cli:main"
 secret-broker = "secret_manager.broker:main"
 secret-manager = "secret_manager.cli:main"
+stimulus-corpus = "stimulus_corpus.cli:main"
 surgery-artifact = "surgery_artifacts.cli:main"
 
 [project.entry-points."abliteralus.artifact_backends"]
