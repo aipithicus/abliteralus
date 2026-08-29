@@ -6,6 +6,7 @@ import gc
 import json
 import math
 import os
+import re
 import statistics
 import subprocess
 from contextlib import contextmanager, nullcontext
@@ -487,6 +488,55 @@ def evaluate_cases(
     return rows
 
 
+_CATEGORY_CODE = re.compile(r"\bS\d+\b")
+
+
+def parse_emitted_category(
+    tokenizer: Any,
+    completion_token_ids: Sequence[int],
+    label_token_index: int | None,
+) -> str | None:
+    """Return the policy code the guard emitted after its verdict, if it emitted one.
+
+    This is a response, not a construction coordinate. It is recorded on result rows
+    and never written back into the dataset contract, so that grouping by what the
+    model actually branched on stays an analysis-time operation over run outputs.
+    """
+
+    if label_token_index is None:
+        return None
+    tail = list(completion_token_ids)[label_token_index + 1 :]
+    if not tail:
+        return None
+    text = tokenizer.decode(tail, skip_special_tokens=True)
+    match = _CATEGORY_CODE.search(text)
+    return match.group(0) if match else None
+
+
+def summarize_emitted_categories(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Report which policy codes the model actually used, and on which pairs.
+
+    A trunk-versus-branch decomposition needs several pairs behind each code. This
+    states how far a corpus is from supporting one instead of letting a
+    single-pair category masquerade as a category mean.
+    """
+
+    by_category: dict[str, list[str]] = {}
+    for row in rows:
+        code = row.get("emitted_category")
+        if code is None:
+            continue
+        by_category.setdefault(str(code), []).append(str(row.get("pair_id")))
+    counts = {code: len(set(pairs)) for code, pairs in by_category.items()}
+    return {
+        "codes": sorted(by_category),
+        "pairs_per_code": dict(sorted(counts.items())),
+        "pair_ids": {code: sorted(set(pairs)) for code, pairs in sorted(by_category.items())},
+        "min_pairs_per_code": min(counts.values()) if counts else 0,
+        "uncoded_rows": sum(1 for row in rows if row.get("emitted_category") is None),
+    }
+
+
 def _generation_row(
     prepared: PreparedCase,
     completion_token_ids: Sequence[int],
@@ -516,6 +566,11 @@ def _generation_row(
             skip_special_tokens=False,
         ),
         "label_token_index": label_token_index,
+        "emitted_category": parse_emitted_category(
+            tokenizer,
+            completion_token_ids,
+            label_token_index,
+        ),
         "decision_prefix_token_ids": list(completion_token_ids[:prefix_end]),
         "emitted_label_token_id": emitted_label_token_id,
         "unsafe_minus_safe_logit_margin": margin,
@@ -1480,6 +1535,22 @@ def run_loaded_study(
             },
         }
 
+    # Grouping by the code the model itself emitted, rather than by the authored
+    # category, is the only grouping that reflects how the model branches. It is
+    # derived from already-captured baseline completions, so it costs no forward
+    # passes, and it stays in the results rather than the dataset contract.
+    emitted_categories = {
+        split: summarize_emitted_categories(
+            baseline_generation_rows(
+                cases,
+                tokenizer=tokenizer,
+                safe_token_id=safe_token_id,
+                unsafe_token_id=unsafe_token_id,
+            )
+        )
+        for split, cases in (("fit", fit_cases), ("dev", dev_cases))
+    }
+
     result = {
         "schema_version": 1,
         "mode": "reversible-guard-steering",
@@ -1497,6 +1568,7 @@ def run_loaded_study(
             "rows": [observations[name].row for name in sorted(observations)],
         },
         "causal_map": causal_json,
+        "emitted_categories": emitted_categories,
         "dev": {
             "baseline": {"summary": summarize_rows(baseline_dev), "rows": baseline_dev},
             "sweeps": sweeps,

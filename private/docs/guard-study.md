@@ -44,6 +44,39 @@ The `low_causal_layer` control stays pinned to `mean_absolute_effect` regardless
 the configured strategy. It exists to supply an inert layer, and a differential
 score near zero means a flat region of the plateau, not an inactive layer.
 
+## Emitted categories and subspace ablation
+
+Result rows carry `emitted_category`, the policy code the guard emitted after its
+verdict, parsed from the baseline completion. This is a response, not a
+construction coordinate: it is never written back into the dataset contract, and
+the authored `category` field stays what it was. Grouping by what the model
+actually branched on is therefore an analysis-time operation over run outputs.
+
+`steering-results.json` carries an `emitted_categories` block per split with
+`pairs_per_code` and `min_pairs_per_code`. A trunk-versus-branch decomposition
+needs several pairs behind each code; the tracked pilot has one pair behind most
+of them, so that decomposition is blocked on corpus size rather than on code.
+
+`build_contrastive_basis` decomposes the per-pair difference vectors into an
+orthonormal rank-r basis by SVD. Rank one recovers the dominant axis of the same
+differences the mean-difference direction averages; higher ranks expose how much
+separation that single axis leaves behind. `explained_fraction` reports how the
+class separation distributes across the retained axes.
+
+`ProjectionAblationHooks` projects that subspace out of the residual stream —
+`h <- h - f * B^T B h` for an orthonormal basis `B` — rather than adding to it.
+Steering slides the decision threshold; ablation asks whether the decision is
+still reachable without the subspace, which is the reversible analogue of excising
+a direction from weights. Two parameters carry the claim being made:
+
+- `fraction` scales the removal, so 0 is the identity and 1 is full projection.
+- `positions` is `all` or `last`. Removing a direction only at the decision
+  register is a statement about a readout; removing it at every position is a
+  statement about the computation. An anatomical claim needs the latter.
+
+A supplied basis is orthonormalized by QR before use, since a projector is only
+idempotent when its basis is orthonormal.
+
 ## Precision
 
 A guard margin is a difference of two logits of similar magnitude, so its error
