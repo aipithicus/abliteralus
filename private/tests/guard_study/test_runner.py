@@ -8,6 +8,7 @@ import pytest
 import torch
 from guard_study.contracts import GuardCase, GuardDatasetContract, GuardPair
 from guard_study.interventions import build_contrastive_direction
+from guard_study.layer_selection import LayerSelection
 from guard_study.runner import (
     PreparedCase,
     _study_hf_home,
@@ -221,7 +222,7 @@ def test_last_token_causal_mapping_uses_the_guard_margin():
         safe_token_id=2,
         unsafe_token_id=3,
         max_patch_pairs=1,
-        top_k_layers=1,
+        selection=LayerSelection(strategy="mean_absolute_effect", top_k=1, params={}),
     )
 
     assert result["top_layers"] in ([0], [1])

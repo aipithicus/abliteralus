@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import yaml
 
 from .errors import ContractError
+from .layer_selection import LayerSelection, parse_layer_selection
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -109,7 +110,7 @@ class GuardStudySpec:
     name: str
     dataset_path: Path
     surgery_experiment_path: Path
-    top_k_layers: int
+    layer_selection: LayerSelection
     max_patch_pairs: int
     doses: tuple[float, ...]
     include_joint_arm: bool
@@ -341,11 +342,20 @@ def load_study_spec(path: str | Path) -> GuardStudySpec:
         raise ContractError(f"study.surgery_experiment does not exist: {surgery_path}")
 
     causal = _mapping(raw.get("causal_mapping"), "study.causal_mapping")
-    _strict_keys(causal, {"top_k_layers", "max_patch_pairs"}, "study.causal_mapping")
+    _strict_keys(
+        causal,
+        {"top_k_layers", "max_patch_pairs", "strategy", "strategy_params"},
+        "study.causal_mapping",
+    )
     top_k_layers = _integer(causal.get("top_k_layers"), "study.causal_mapping.top_k_layers")
     max_patch_pairs = _integer(
         causal.get("max_patch_pairs"),
         "study.causal_mapping.max_patch_pairs",
+    )
+    layer_selection = parse_layer_selection(
+        causal,
+        top_k=top_k_layers,
+        label="study.causal_mapping",
     )
 
     steering = _mapping(raw.get("steering"), "study.steering")
@@ -391,7 +401,7 @@ def load_study_spec(path: str | Path) -> GuardStudySpec:
         name=name,
         dataset_path=dataset_path,
         surgery_experiment_path=surgery_path,
-        top_k_layers=top_k_layers,
+        layer_selection=layer_selection,
         max_patch_pairs=max_patch_pairs,
         doses=doses,
         include_joint_arm=include_joint,

@@ -6,6 +6,9 @@ surgery_experiment: ../surgery/local-llama-guard-3-1b-mirror.yaml
 causal_mapping:
   top_k_layers: 3
   max_patch_pairs: 4
+  strategy: differential_effect
+  strategy_params:
+    order: 1
 
 steering:
   doses: [-2.0, -1.0, -0.5, -0.25, 0.0, 0.25, 0.5, 1.0, 2.0]

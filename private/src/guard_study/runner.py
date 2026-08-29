@@ -34,6 +34,7 @@ from .interventions import (
     build_contrastive_direction,
     orthogonal_sham,
 )
+from .layer_selection import LayerSelection
 
 if TYPE_CHECKING:
     from abliteralus.models.loader import ModelHandle
@@ -750,7 +751,7 @@ def build_causal_map(
     safe_token_id: int,
     unsafe_token_id: int,
     max_patch_pairs: int,
-    top_k_layers: int,
+    selection: LayerSelection,
 ) -> dict[str, Any]:
     selected_pairs = contract.pairs("fit")[:max_patch_pairs]
     effects: dict[int, list[dict[str, Any]]] = {index: [] for index in range(len(layers))}
@@ -798,7 +799,7 @@ def build_causal_map(
         unsafe_token_id=unsafe_token_id,
     )
     per_layer: dict[str, Any] = {}
-    ranking: list[tuple[int, float]] = []
+    magnitudes: list[float] = []
     for layer_idx in range(len(layers)):
         values = [entry["bidirectional_effect"] for entry in effects[layer_idx]]
         absolute = [abs(value) for value in values]
@@ -806,7 +807,7 @@ def build_causal_map(
         cosine = float(torch.dot(direction.direction, label_axis).item())
         mean_effect = statistics.fmean(values)
         mean_absolute = statistics.fmean(absolute)
-        ranking.append((layer_idx, mean_absolute))
+        magnitudes.append(mean_absolute)
         per_layer[str(layer_idx)] = {
             "projection_std": direction.projection_std,
             "safe_projection_mean": direction.safe_projection_mean,
@@ -817,17 +818,26 @@ def build_causal_map(
             "mean_absolute_effect": mean_absolute,
             "pair_effects": effects[layer_idx],
         }
-    ranking.sort(key=lambda item: (-item[1], item[0]))
-    top_layers = [layer for layer, _score in ranking[: min(top_k_layers, len(ranking))]]
-    low_causal_layer = min(ranking, key=lambda item: (item[1], item[0]))[0]
+    ranking = selection.rank(magnitudes)
+    top_layers = list(selection.top_layers(magnitudes))
+    # The low-causal control must stay pinned to raw magnitude: under a differential
+    # strategy the flattest layer scores near zero and would be drawn from the
+    # saturated plateau, which is the opposite of an inert control.
+    low_causal_layer = min(range(len(magnitudes)), key=lambda index: (magnitudes[index], index))
     return {
         "metric": "unsafe_minus_safe_logit_margin",
         "patch_position": "last",
         "patch_pairs": [pair.pair_id for pair in selected_pairs],
+        "layer_selection": selection.summary(),
         "top_layers": top_layers,
         "low_causal_layer": low_causal_layer,
         "ranking": [
-            {"layer_idx": layer_idx, "mean_absolute_effect": score} for layer_idx, score in ranking
+            {
+                "layer_idx": layer_idx,
+                "score": score,
+                "mean_absolute_effect": magnitudes[layer_idx],
+            }
+            for layer_idx, score in ranking
         ],
         "per_layer": per_layer,
         "label_axis": label_axis,
@@ -1055,7 +1065,7 @@ def run_loaded_study(
         safe_token_id=safe_token_id,
         unsafe_token_id=unsafe_token_id,
         max_patch_pairs=study.max_patch_pairs,
-        top_k_layers=study.top_k_layers,
+        selection=study.layer_selection,
     )
 
     tensor_payload: dict[str, torch.Tensor] = {}
