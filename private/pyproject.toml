@@ -1,34 +1,69 @@
-[tool.uv.workspace]
-members = [
-  "secret_manager",
-  "surgery_artifacts",
-  "jsonl_engine",
-  "research_journal",
-  "guard_study",
-  "lab_bench",
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aipithicus-abliteralus-lab"
+version = "0.1.0"
+description = "Private research, experiment, and operations modules for ABLITERALUS"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "Aipithicus Enterprises" }]
+dependencies = [
+  "abliteralus",
+  "filelock>=3.13,<4",
+  "lightning-sdk==2026.8.18",
+  "pyyaml>=6.0",
+  "safetensors>=0.4",
+  "torch>=2.0",
 ]
 
+[project.scripts]
+abliteralus-lightning = "lab_bench.lightning:main"
+guard-study = "guard_study.cli:main"
+lab-bench = "lab_bench.cli:main"
+research-journal = "research_journal.cli:main"
+secret-broker = "secret_manager.broker:main"
+secret-manager = "secret_manager.cli:main"
+surgery-artifact = "surgery_artifacts.cli:main"
+
+[project.entry-points."abliteralus.artifact_backends"]
+capsule-v1 = "surgery_artifacts.integration:run_artifact_stage"
+
 [dependency-groups]
-dev = ["pytest==9.1.1"]
+dev = ["abliteralus[dev]"]
+
+[tool.uv]
+environments = [
+  "sys_platform == 'win32' and os_name == 'nt'",
+  "sys_platform != 'win32' and os_name == 'posix'",
+]
+
+[tool.uv.sources]
+abliteralus = { path = "..", editable = true }
+torch = [
+  { index = "pytorch-cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jsonl_engine = ["schemas/*.json"]
+research_journal = ["schemas/*.json"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra", "-p", "no:cacheprovider"]
-pythonpath = [
-  "secret_manager/src",
-  "surgery_artifacts/src",
-  "jsonl_engine/src",
-  "research_journal/src",
-  "lab_bench/src",
-  "guard_study/src",
-  "..",
-]
-testpaths = [
-  "secret_manager/tests",
-  "surgery_artifacts/tests",
-  "jsonl_engine/tests",
-  "research_journal/tests",
-  "lab_bench/tests",
-  "guard_study/tests",
+pythonpath = ["src", ".."]
+testpaths = ["tests"]
+markers = [
+  "cpu: deterministic tests that do not require a model, GPU, network, or remote service",
 ]
 
 [tool.ruff]
@@ -36,4 +71,4 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+select = ["F"]

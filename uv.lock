@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version < '3.11' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version < '3.11' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version < '3.11' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version < '3.11' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
@@ -152,9 +152,6 @@ gguf = [
     { name = "protobuf" },
     { name = "sentencepiece" },
 ]
-lightning = [
-    { name = "lightning-sdk", marker = "python_full_version >= '3.11'" },
-]
 quantization = [
     { name = "bitsandbytes" },
 ]
@@ -184,7 +181,6 @@ requires-dist = [
     { name = "datasets", specifier = ">=2.14" },
     { name = "gradio", marker = "extra == 'spaces'", specifier = ">=6.7,<7.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = "==6.165.3" },
-    { name = "lightning-sdk", marker = "python_full_version >= '3.11' and extra == 'lightning'", specifier = "==2026.8.18" },
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.13.0" },
     { name = "numpy", specifier = ">=1.24" },
@@ -204,7 +200,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.64" },
     { name = "transformers", specifier = ">=4.40" },
 ]
-provides-extras = ["dev", "quantization", "spaces", "lightning", "gguf"]
+provides-extras = ["dev", "quantization", "spaces", "gguf"]
 
 [package.metadata.requires-dev]
 ci = [
@@ -502,15 +498,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/13/c3/c3dc3f564ce6877ecd2a05f8d751b9b27a8c320c2533a98b0c86349778d0/audioop_lts-0.2.2-cp314-cp314t-win32.whl", hash = "sha256:068aa17a38b4e0e7de771c62c60bbca2455924b67a8814f3b0dee92b5820c0b3", size = 27331, upload-time = "2025-08-05T16:43:14.19Z" },
     { url = "https://files.pythonhosted.org/packages/72/bb/b4608537e9ffcb86449091939d52d24a055216a36a8bf66b936af8c3e7ac/audioop_lts-0.2.2-cp314-cp314t-win_amd64.whl", hash = "sha256:a5bf613e96f49712073de86f20dbdd4014ca18efd4d34ed18c75bd808337851b", size = 31697, upload-time = "2025-08-05T16:43:15.193Z" },
     { url = "https://files.pythonhosted.org/packages/f6/22/91616fe707a5c5510de2cac9b046a30defe7007ba8a0c04f9c08f27df312/audioop_lts-0.2.2-cp314-cp314t-win_arm64.whl", hash = "sha256:b492c3b040153e68b9fdaff5913305aaaba5bb433d8a7f73d5cf6a64ed3cc1dd", size = 25206, upload-time = "2025-08-05T16:43:16.444Z" },
-]
-
-[[package]]
-name = "backoff"
-version = "2.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba", size = 17001, upload-time = "2022-10-05T19:19:32.061Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/73/b6e24bd22e6720ca8ee9a85a0c4a2971af8497d8f3193fa05390cbd46e09/backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8", size = 15148, upload-time = "2022-10-05T19:19:30.546Z" },
 ]
 
 [[package]]
@@ -866,15 +853,15 @@ version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
@@ -1255,20 +1242,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/81/e1/56027a71e31b02ddc53c7d65b01e68edf64dea2932122fe7746a516f75d5/dill-0.4.1.tar.gz", hash = "sha256:423092df4182177d4d8ba8290c8a5b640c66ab35ec7da59ccfa00f6fa3eea5fa", size = 187315, upload-time = "2026-01-19T02:36:56.85Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/77/dc8c558f7593132cf8fefec57c4f60c83b16941c574ac5f619abb3ae7933/dill-0.4.1-py3-none-any.whl", hash = "sha256:1e1ce33e978ae97fcfcff5638477032b801c46c7c65cf717f95fbc2248f79a9d", size = 120019, upload-time = "2026-01-19T02:36:55.663Z" },
-]
-
-[[package]]
-name = "docker"
-version = "7.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pywin32", marker = "os_name != 'posix'" },
-    { name = "requests" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/88/7f/731ff914b0255d3d065f45fd4e626d4b8c95dbcbaada049f337a6ac16410/docker-7.2.0.tar.gz", hash = "sha256:cebb93773d334f778e023a7ee352a8d6e13ab1bd3b863a4d4a59dec897df43ac", size = 118731, upload-time = "2026-07-09T14:53:46.39Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/23/529140fe1aab80fc6992f93a706deec709140a6397439139a054e1515c45/docker-7.2.0-py3-none-any.whl", hash = "sha256:a3f45fdeb9165e2d25d9a1d02ddf3bc70fb572cf5ebbf9b58558c22caf29b71f", size = 148775, upload-time = "2026-07-09T14:53:45.224Z" },
 ]
 
 [[package]]
@@ -2061,31 +2034,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lightning-sdk"
-version = "2026.8.18"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "backoff" },
-    { name = "click" },
-    { name = "docker" },
-    { name = "fastapi" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "rich" },
-    { name = "rich-click" },
-    { name = "six" },
-    { name = "textual" },
-    { name = "tqdm" },
-    { name = "urllib3" },
-    { name = "uvicorn" },
-    { name = "websocket-client" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/0a/2e49536b1799fbf9387c945a93c6b45f371a3d86d21cef49c0ec0748e026/lightning_sdk-2026.8.18-py3-none-any.whl", hash = "sha256:7ae7fa5a31f23f5c5fc91f7632a0907273d6c2c96b24f364e0b29473c3d16491", size = 3122914, upload-time = "2026-08-18T10:26:30.261Z" },
-]
-
-[[package]]
 name = "linkify-it-py"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2236,15 +2184,15 @@ version = "3.11.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
@@ -2654,15 +2602,15 @@ version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
@@ -2862,13 +2810,13 @@ version = "2.5.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9a/80/db0b4559e57ec36362bedbb05530a87fafbcb6067708c946967a41d449e7/numpy-2.5.2.tar.gz", hash = "sha256:d482d171c406ae88c5b19cad3b6a1c4c5209f886ab74bc44c2c865c23f52d860", size = 20773161, upload-time = "2026-08-09T13:48:27.962Z" }
@@ -3832,31 +3780,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pywin32"
-version = "312"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/1b/9cfdeac80ee45bebbbcb31f1b7b99a0d81a1c72de48d837be984e0e88b1d/pywin32-312-cp310-cp310-win32.whl", hash = "sha256:772235332b5d1024c696f11cea1ae4be7930f0a8b894bb43db14e3f435f1ff7e", size = 6361387, upload-time = "2026-06-04T07:49:14.329Z" },
-    { url = "https://files.pythonhosted.org/packages/33/b1/7afc96d041d982c27bc2df6f853d43f01fd273e3d39d04be3647ddeb533d/pywin32-312-cp310-cp310-win_amd64.whl", hash = "sha256:5dbc35d2b5320dc07f25fa31269cfb767471002b17de5eb067d03da68c7cb2db", size = 6926780, upload-time = "2026-06-04T07:49:16.881Z" },
-    { url = "https://files.pythonhosted.org/packages/ce/3a/4140da9ad54108e517f4a16b2d83da3033e08662144623e1239587cb7db6/pywin32-312-cp310-cp310-win_arm64.whl", hash = "sha256:3020656e34f1cf7faeb7bccd2b84653a607c6ff0c55ada85e6487d61716deabd", size = 4307203, upload-time = "2026-06-04T07:49:18.993Z" },
-    { url = "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl", hash = "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c", size = 6362659, upload-time = "2026-06-04T07:49:21.349Z" },
-    { url = "https://files.pythonhosted.org/packages/35/c4/dcd2d62b5944b6d5db53413a5899016ccd57ffcb7278f3f81655d25d2027/pywin32-312-cp311-cp311-win_amd64.whl", hash = "sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a", size = 6928825, upload-time = "2026-06-04T07:49:23.934Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/56/3cbb433fe4501cdba2eb9040f56a4e1a8243faa4186b25295564d1a7a79d/pywin32-312-cp311-cp311-win_arm64.whl", hash = "sha256:b2200a054ca6d6625c4842fc56a4976a4b47f96b73dbe5538c3f813a80359f47", size = 6721875, upload-time = "2026-06-04T07:49:26.416Z" },
-    { url = "https://files.pythonhosted.org/packages/83/ff/32aa7d2ed0ab12b323aaa64f9b75e6ad4f8fd09f9ccfc28c79414d46838d/pywin32-312-cp312-cp312-win32.whl", hash = "sha256:dab4f65ac9c4e48400a2a0530c46c3c579cd5905ecd11b80692373915269208b", size = 6371877, upload-time = "2026-06-04T07:49:28.836Z" },
-    { url = "https://files.pythonhosted.org/packages/03/d9/77040d3b43df3f3be32ea289433d660d2727f5ba327bc73be835127d9d60/pywin32-312-cp312-cp312-win_amd64.whl", hash = "sha256:b457f6d628a47e8a7346ce22acb7e1a46a4a78b52e1d17e1af56871bd19a93bc", size = 6914841, upload-time = "2026-06-04T07:49:31.85Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/cc/7b1ec671775756020a0ee7f4feeaf3c568f0ab86bd3900088cf986937a92/pywin32-312-cp312-cp312-win_arm64.whl", hash = "sha256:6017c58e12f6809fbb0555b75df144c2922a9ffd18e4b9b5afa863b6c1a9d950", size = 6727901, upload-time = "2026-06-04T07:49:34.244Z" },
-    { url = "https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl", hash = "sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c", size = 6370184, upload-time = "2026-06-04T07:49:36.253Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/db/36a78e3403099d31d9746d13fdcde5accc43c1155f375a34d15983a479a7/pywin32-312-cp313-cp313-win_amd64.whl", hash = "sha256:c53e878d15a1c44788082bfe712a905433473aa38f86375b7cf8b45e3acbaaf9", size = 6914298, upload-time = "2026-06-04T07:49:38.876Z" },
-    { url = "https://files.pythonhosted.org/packages/84/37/c1697194092b76de9ed47ca124323f02c57ffc8a45c06f88a3d5acaf01eb/pywin32-312-cp313-cp313-win_arm64.whl", hash = "sha256:59aba5d5940842075343a5ddc6b11f1cdf0d1567fe745290359dfbcc7c2eb831", size = 6727640, upload-time = "2026-06-04T07:49:41.083Z" },
-    { url = "https://files.pythonhosted.org/packages/fc/2b/1f3cded5822fd49c02f40544cbb5f58c7cfd6b1694869fd476cb6170ee97/pywin32-312-cp314-cp314-win32.whl", hash = "sha256:a77a90fbb6881238d2ca9c6fd797b25817f3768fe78d214a90137ff055a75f5b", size = 6468928, upload-time = "2026-06-04T07:49:43.188Z" },
-    { url = "https://files.pythonhosted.org/packages/21/82/3bf86d2e2808902013132e1ce905a7da0da53790f3836c64bf44d55e24f3/pywin32-312-cp314-cp314-win_amd64.whl", hash = "sha256:a4dd3a848290ef724347b19f301045831d8e802fa4464f491b98b1e0a081432e", size = 7024157, upload-time = "2026-06-04T07:49:45.34Z" },
-    { url = "https://files.pythonhosted.org/packages/a4/0e/73f6d6800b4f27655abd9e9f6aaeaefcddb2b946e4674efa2bab184a7f7b/pywin32-312-cp314-cp314-win_arm64.whl", hash = "sha256:9fce94568364e0155e6dfb781ac5d95903be8baf28670632beab1b523f300daa", size = 6839598, upload-time = "2026-06-04T07:49:47.613Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/61/caa39686032d2ebdd04ff0ab5cbe163126c0066d98e00c9018646e42393b/pywin32-312-cp315-cp315-win32.whl", hash = "sha256:5c1fbe4a937a73ae9297384a3da38518cbc694c68ad8a809b2e19acd350f03ed", size = 6471159, upload-time = "2026-06-04T07:49:50.035Z" },
-    { url = "https://files.pythonhosted.org/packages/0f/cd/7e1de64a4a6f69c04214169657ccab0d93a670ea50e35eb8f489d7378249/pywin32-312-cp315-cp315-win_amd64.whl", hash = "sha256:c2f03a0f73f804a13c2735b99392b0cd426bb4f2c4d0178e5ac966a0f21618d5", size = 7025293, upload-time = "2026-06-04T07:49:54.857Z" },
-    { url = "https://files.pythonhosted.org/packages/23/ed/4532e9388e65fa16b46776ef47ad631a64eda1631884488af707666350ed/pywin32-312-cp315-cp315-win_arm64.whl", hash = "sha256:a8597d28f267b39074aef51fa593530082b39cbe5a074226096857b1fed2dfb9", size = 6840337, upload-time = "2026-06-04T07:49:57.531Z" },
-]
-
-[[package]]
 name = "pywin32-ctypes"
 version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4138,20 +4061,6 @@ wheels = [
 ]
 
 [[package]]
-name = "rich-click"
-version = "1.9.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "colorama", marker = "os_name != 'posix'" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/ea/21e4867ea0ef881ffd4c0550fc21a061435e50d6324bcd034396633cbc18/rich_click-1.9.8.tar.gz", hash = "sha256:4008f921da88b5d91646c134ec881c1500e5a6b3f093e90e8f29400e09608371", size = 75363, upload-time = "2026-05-28T19:54:59.144Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/97/a87901aef6b7e7e4a34c6dd6cc17dca8594a592ef9d9dd765fca2b7facf7/rich_click-1.9.8-py3-none-any.whl", hash = "sha256:12873865396e6927835d4eabb1cc3996edcd65b7ac9b2391a29eca4f335a2f93", size = 72189, upload-time = "2026-05-28T19:54:57.867Z" },
-]
-
-[[package]]
 name = "ruff"
 version = "0.16.2"
 source = { registry = "https://pypi.org/simple" }
@@ -4267,15 +4176,15 @@ version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
@@ -4465,13 +4374,13 @@ version = "1.18.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -4933,14 +4842,14 @@ version = "2.13.0+cu130"
 source = { registry = "https://download.pytorch.org/whl/cu130" }
 resolution-markers = [
     "python_full_version >= '3.14' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
-    "python_full_version < '3.11' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and os_name == 'posix' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and os_name == 'posix' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and os_name == 'posix' and sys_platform == 'linux'",
+    "python_full_version == '3.11.*' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and os_name == 'posix' and sys_platform == 'linux'",
+    "python_full_version < '3.11' and os_name == 'nt' and sys_platform == 'win32'",
     "python_full_version < '3.11' and os_name == 'posix' and sys_platform == 'linux'",
 ]
 dependencies = [
@@ -5142,15 +5051,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/34/74/c6428f875774288bec1396f5bfcbc2d925700a4dad61727fd5f2b12f249d/wcwidth-0.8.2.tar.gz", hash = "sha256:91fbef97204b96a3d4d421609b80340b760cf33e26da123ff243d76b1fda8dda", size = 1466253, upload-time = "2026-06-29T18:11:11.601Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/42/3e5985a0a7e57de470b320c6d6a1a67c844f6737a587f3d44dd13d1819e7/wcwidth-0.8.2-py3-none-any.whl", hash = "sha256:d63947694a0539a1d51e01eda7caf800c291020e6cdd7e28ad7b14dd33ad4f85", size = 323166, upload-time = "2026-06-29T18:11:09.888Z" },
-]
-
-[[package]]
-name = "websocket-client"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]

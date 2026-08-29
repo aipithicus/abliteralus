@@ -62,38 +62,6 @@ def _write_config(
     return path
 
 
-def test_checked_in_profiles_are_valid_and_pin_model_revisions():
-    repo = Path(__file__).resolve().parents[1]
-    local = load_experiment_spec(repo / "experiments/surgery/local-qwen25-0.5b.yaml")
-    guard = load_experiment_spec(repo / "experiments/surgery/local-llama-guard-3-1b.yaml")
-    guard_mirror = load_experiment_spec(
-        repo / "experiments/surgery/local-llama-guard-3-1b-mirror.yaml"
-    )
-    remote = load_experiment_spec(repo / "experiments/surgery/lightning-qwen25-7b.yaml")
-
-    assert local.model["revision"] == "c89bee90d9f811437d9735454613c35b4a3c4dc8"
-    assert local.gguf_enabled is True
-    assert local.gguf["compare_baseline"] is True
-    assert local.capsule_enabled is True
-    assert guard.model["revision"] == "acf7aafa60f0410f8f42b1fa35e077d705892029"
-    assert guard.evaluation_enabled is True
-    assert guard.model["dtype"] == "bfloat16"
-    assert guard.pipeline["use_chat_template"] is True
-    assert guard.pipeline["skip_standard_verify"] is True
-    assert len(guard.evaluation["cases"]) == 8
-    assert guard_mirror.model["source"] == "project-free-llama/Llama-Guard-3-1B"
-    assert guard_mirror.model["dtype"] == "bfloat16"
-    assert guard_mirror.model["revision"] == "fee8780b6e2dfdd9fd7d60dcbac1a8ee1b166af5"
-    assert guard_mirror.model["upstream_source"] == "meta-llama/Llama-Guard-3-1B"
-    assert guard_mirror.model["upstream_revision"] == "acf7aafa60f0410f8f42b1fa35e077d705892029"
-    assert guard_mirror.model["expected_sha256"]["model.safetensors"] == (
-        "e010146ce3209c8e1485021cbea5462f3f04461be924a066b6c0d80085b17957"
-    )
-    assert remote.model["revision"] == "a09a35458c702b33eeacc393d103063234e8bc28"
-    assert remote.gguf_enabled is False
-    assert remote.capsule_enabled is True
-
-
 def test_direct_gguf_surgery_is_rejected(tmp_path):
     gguf = tmp_path / "model.gguf"
     gguf.write_bytes(b"GGUF")

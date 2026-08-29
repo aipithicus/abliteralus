@@ -171,7 +171,6 @@
         "abliteralus/interactive.py",
         "abliteralus/local_ui.py",
         "abliteralus/models_client.py",
-        "abliteralus/lightning_surgery.py",
         "abliteralus/remote.py",
         "abliteralus/remote_contracts.py",
         "abliteralus/service_contracts.py",
@@ -187,7 +186,6 @@
         "tests/test_local_ui_portability.py",
         "tests/test_bestiary_contracts.py",
         "tests/test_models_client_contracts.py",
-        "tests/test_lightning_surgery.py",
         "tests/test_remote_boundaries.py",
         "tests/test_remote_contracts.py",
         "tests/test_surgery_bench.py",
@@ -824,18 +822,6 @@
       "conditional_gates": [
         "cuda-runtime",
         "model-download-runtime"
-      ]
-    },
-    {
-      "path": "abliteralus/lightning_surgery.py",
-      "risk_class": "mixed-runtime",
-      "risk": "privacy-scoped source bundling, paid Studio ownership, remote execution, collection, and compute release",
-      "required_tests": [
-        "tests/test_lightning_surgery.py"
-      ],
-      "conditional_gates": [
-        "network-services",
-        "remote-execution"
       ]
     },
     {

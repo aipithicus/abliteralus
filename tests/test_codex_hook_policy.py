@@ -27,9 +27,9 @@ SPEC.loader.exec_module(POLICY)
     "command",
     [
         "pytest -q",
-        ".venv/Scripts/pytest.exe -q private/guard_study/tests",
+        ".venv/Scripts/pytest.exe -q private/tests/guard_study",
         "python -m pytest -q",
-        ".venv/Scripts/python.exe -m pytest private/guard_study/tests",
+        ".venv/Scripts/python.exe -m pytest private/tests/guard_study",
         "uv run --frozen pytest -q",
         "pwsh -NoProfile -File deps/uv/run-uv.ps1 run pytest -q",
         "nu -c '^.venv/Scripts/python.exe -m pytest -q tests'",
@@ -50,7 +50,7 @@ def test_unmanaged_pytest_invocations_are_detected(command: str) -> None:
         'python -c "import pytest; print(pytest.__version__)"',
         (
             "private/.venv/Scripts/lab-bench.exe --config "
-            "private/lab_bench/lab.local.toml test -- private/guard_study/tests"
+            "private/config/lab.local.toml test -- private/tests/guard_study"
         ),
         "pwsh -NoProfile -File deps/uv/run-uv.ps1 run rg pytest README.md",
         "uv run python helper.py pytest",
@@ -92,7 +92,7 @@ def test_hook_emits_codex_deny_contract_for_unmanaged_pytest() -> None:
 def test_hook_is_silent_for_managed_launcher() -> None:
     command = (
         "private/.venv/Scripts/lab-bench.exe --config "
-        "private/lab_bench/lab.local.toml test -- private/guard_study/tests"
+        "private/config/lab.local.toml test -- private/tests/guard_study"
     )
     completed = subprocess.run(
         [sys.executable, "-I", "-B", str(HOOK)],

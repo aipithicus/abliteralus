@@ -41,7 +41,6 @@ dependencies = [
 
 [project.scripts]
 abliteralus-surgery = "abliteralus.surgery_bench:main"
-abliteralus-lightning = "abliteralus.lightning_surgery:main"
 
 [project.optional-dependencies]
 dev = [
@@ -54,7 +53,6 @@ dev = [
 ]
 quantization = ["bitsandbytes>=0.46.1"]
 spaces = ["gradio>=6.7,<7.0"]
-lightning = ["lightning-sdk==2026.8.18; python_version >= '3.11'"]
 gguf = [
     "protobuf==4.25.8",
     "sentencepiece==0.2.1",

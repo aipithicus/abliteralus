@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 MANAGED_TEST_COMMAND = (
     "private/.venv/Scripts/lab-bench.exe --config "
-    "private/lab_bench/lab.local.toml test -- <pytest arguments>"
+    "private/config/lab.local.toml test -- <pytest arguments>"
 )
 BLOCK_REASON = (
     "Unmanaged pytest execution is prohibited in this repository because bare pytest "

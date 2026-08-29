@@ -53,7 +53,8 @@ results/
 # Secrets & credentials
 credentials*
 secrets*
-/private/lab_bench/lab.local.toml
+!/private/config/secrets.example.toml
+/private/config/lab.local.toml
 *.pem
 *.key
 *.p12
