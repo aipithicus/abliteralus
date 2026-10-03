@@ -1,3 +1,7 @@
+# temporary directories 
+
+**/.snapshot/
+
 # Python-generated artifacts at any repository depth
 **/__pycache__/
 **/*.py[cod]
